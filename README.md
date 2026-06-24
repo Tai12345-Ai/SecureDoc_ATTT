@@ -137,6 +137,8 @@ http://localhost:5173
 
 Flow chính của User Signing Mode là **Ký PDF/PAdES**. Flow “ký payload demo” chỉ là advanced demo để thuyết trình cơ chế canonical payload, nonce và RSA-PSS.
 
+Signing history trong User Mode hiện là **in-memory demo**: backend restart sẽ mất history. Đây là giới hạn có chủ đích của Phase 1/2; Phase 6 sẽ DB hóa signing history, verification report và audit trail.
+
 ### Certificate Lifecycle Mode
 
 ```text
@@ -160,6 +162,8 @@ Certificate issuance
 ```
 
 Demo hiện có bootstrap certificate để chạy nhanh flow ban đầu, đồng thời có lifecycle-issued certificate để minh họa enrollment/issue/activate/revoke. Production không nên để CA tự sinh private key người dùng.
+
+Certificate lifecycle hiện lưu JSON trong `data/certificates`. Đây là storage demo cho Phase 2; production cần database, RBAC cho CA Officer/Admin, audit production và CRL/OCSP thật.
 
 ### Pipeline Demo Mode
 
@@ -188,6 +192,23 @@ Create token
 → Explain unlinkability
 ```
 
+## Phase 1/2 status
+
+```text
+Phase 1:
+- Đã ký và verify PDF/PAdES-B-B thật bằng pyHanko.
+- Đã có Download signed PDF.
+- Đã có Verify another signed PDF.
+- Đã có test reject unsigned PDF và tampered PDF.
+
+Phase 2:
+- Đã có Root CA → Intermediate CA → User Signing Certificate.
+- Đã có enrollment + proof-of-possession.
+- Đã có issue/activate/revoke/status/chain.
+- Đã có lifecycle_status, revocation_status và effective_status.
+- Đã có certificate profile validation cho document signing certificate.
+```
+
 ## Giới hạn bảo mật
 
 Bản này là demo học thuật, chưa phải production:
@@ -197,6 +218,8 @@ Bản này là demo học thuật, chưa phải production:
 - PAdES hiện là PAdES-B-B demo bằng pyHanko; chưa phải PAdES-B-T/B-LT/B-LTA.
 - Timestamp là demo JSON trong payload demo, chưa phải RFC3161 TSA thật.
 - Revocation là local demo list, chưa phải OCSP/CRL thật.
+- Signing history hiện là in-memory; restart backend sẽ mất history.
+- Certificate lifecycle hiện lưu JSON trong `data/certificates`; production cần DB, RBAC và audit production.
 - PDF/PAdES verification dùng SecureDoc Demo Root CA local, chưa phải public trusted CA.
 - Legal readiness luôn `false` trong demo.
 - User private key trong demo có thể được backend mô phỏng như signing service; production nên dùng browser non-extractable key, smartcard, USB token, HSM/KMS hoặc remote signing đạt chuẩn.
