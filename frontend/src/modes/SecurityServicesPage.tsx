@@ -127,16 +127,24 @@ export function SecurityServicesPage() {
     <section className="card">
       <div className="section-title">
         <div>
-          <h2>Security Services</h2>
-          <p>Demo Phase 3, 4, 5: signed TSA token, revocation policy, browser key enrollment and remote signing.</p>
+          <h2>Trust & Key Services</h2>
+          <p>Advanced Security Services — Phase 3–5 technical demo. Đây là console kỹ thuật cho timestamp, revocation, key custody và remote signing; không phải luồng người dùng cuối.</p>
         </div>
-        <div className="mode-pill">Phase 3-5</div>
+        <div className="mode-pill">Technical services</div>
+      </div>
+
+      <div className="role-grid">
+        <div className="role-card"><strong>Timestamp</strong><p>Chứng minh hash/chữ ký tồn tại tại một thời điểm.</p><code>DSS / RFC3161 direction</code></div>
+        <div className="role-card"><strong>Revocation</strong><p>Kiểm tra chứng thư còn good hay đã bị thu hồi.</p><code>EJBCA / CRL / OCSP direction</code></div>
+        <div className="role-card"><strong>Browser key</strong><p>Private key nằm ở browser, backend chỉ nhận public key + PoP.</p><code>WebCrypto / PKI</code></div>
+        <div className="role-card"><strong>Remote signing</strong><p>Signing service kiểm tra policy/MFA rồi ký bằng key được bảo vệ.</p><code>SignServer direction</code></div>
       </div>
 
       {error && <div className="error">{error}</div>}
 
       <div className="summary-card">
         <h3>Timestamp Service</h3>
+        <p className="hint">Message imprint là SHA-256 hash của tài liệu hoặc chữ ký, không phải nội dung tài liệu gốc. Bản hiện tại là signed demo TSA token, chưa phải RFC3161 TimeStampToken thật.</p>
         <label>Message imprint SHA-256</label>
         <input value={imprint} onChange={e => setImprint(e.target.value)} />
         <div className="actions">
@@ -149,6 +157,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card">
         <h3>Revocation Service</h3>
+        <p className="hint">Demo CRL hiện chưa ký theo chuẩn X.509 CRL. Production cần signed CRL hoặc OCSP và policy kiểm tra revocation tại signing time nếu có trusted timestamp.</p>
         <label>Certificate serial</label>
         <input value={serial} onChange={e => setSerial(e.target.value)} placeholder="Paste certificate serial" />
         <div className="actions">
@@ -173,7 +182,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card">
         <h3>Browser Payload Signing</h3>
-        <p className="hint">Prepare and confirm a request in User Signing, then paste its requestId and canonical payload JSON from Advanced details.</p>
+        <p className="hint">Prepare and confirm a request in User Signing, then paste its requestId and canonical payload JSON from Advanced details. This demonstrates browser-side signing; PDF/PAdES browser signing is a future integration.</p>
         <label>Request ID</label>
         <input value={clientRequestId} onChange={e => setClientRequestId(e.target.value)} placeholder="req_..." />
         <label>Canonical payload JSON</label>
@@ -186,7 +195,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card">
         <h3>Remote Signing</h3>
-        <p className="hint">Use a prepared and confirmed requestId from User Signing. Demo MFA code is <code>000000</code>. This mode requires the demo backend signing certificate to be active.</p>
+        <p className="hint">Use a prepared and confirmed requestId from User Signing. Demo MFA code is <code>000000</code>. This mode requires the demo backend signing certificate to be active. Production should replace this with HSM/KMS/qualified remote signing.</p>
         <label>Request ID</label>
         <input value={remoteRequestId} onChange={e => setRemoteRequestId(e.target.value)} placeholder="req_..." />
         <div className="actions">
