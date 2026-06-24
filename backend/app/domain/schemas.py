@@ -28,13 +28,17 @@ class CertificateStatusView(BaseModel):
     serial: str
     lifecycle_status: str
     revocation_status: str
+    effective_status: str
     revoked: bool
     profile_id: str
+    profile_validation: Dict[str, Any]
     subject: str
     issuer: str
     valid_from: str
     valid_to: str
     key_source: str
+    certificate_origin: str
+    is_bootstrap_demo_certificate: bool
     source: str
     warning: str
 

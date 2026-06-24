@@ -9,6 +9,7 @@ from app.services.signing_service import (
     sign_and_verify,
     sign_pdf_request,
     get_signed_pdf_record,
+    get_signing_history,
 )
 from app.services.certificate_lifecycle_service import get_my_active_certificate, sync_demo_certificate_record
 
@@ -18,12 +19,16 @@ router = APIRouter()
 def get_workspace():
     init_demo_pki()
     sync_demo_certificate_record()
+    try:
+        active_certificate = get_my_active_certificate()
+    except Exception:
+        active_certificate = None
     return {
         "user": {
             "name": "Alice Demo Signer",
             "email": "alice@example.com",
         },
-        "certificate": get_my_active_certificate(),
+        "certificate": active_certificate,
         "availableActions": [
             "upload_document",
             "prepare_signing_request",
@@ -87,3 +92,7 @@ def download_signed_pdf(file_id: str):
         media_type="application/pdf",
         filename=f"signed_{record['original_filename'] if record['original_filename'].lower().endswith('.pdf') else record['original_filename'] + '.pdf'}",
     )
+
+@router.get("/history")
+def signing_history():
+    return {"items": get_signing_history()}

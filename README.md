@@ -22,7 +22,7 @@ Bản v4 thiết kế lại SecureDoc theo hướng **web demo chữ ký số đ
 
 ## Mục tiêu
 
-Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend ăn khớp theo 3 mode:
+Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend ăn khớp theo 4 mode:
 
 ```text
 1. Pipeline Demo Mode
@@ -32,7 +32,10 @@ Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend
    Mô phỏng web ký số thực tế cho người dùng cuối.
    User không phải nhìn JSON thô, private key PEM, certificate JSON, CA key.
 
-3. Blind Signature Mode
+3. Certificate Lifecycle Mode
+   Demo enrollment, issue, activate, revoke, status và chain của X.509 certificate.
+
+4. Blind Signature Mode
    Demo chữ ký mù riêng: blind → sign blinded → unblind → verify.
 ```
 
@@ -42,6 +45,7 @@ Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend
 frontend/
 ├── Pipeline Demo
 ├── User Signing
+├── Certificate Lifecycle
 └── Blind Signature
 
 backend/
@@ -121,13 +125,41 @@ http://localhost:5173
 
 ```text
 1. Load chứng thư đang active của user
-2. Upload tài liệu
+2. Upload PDF
 3. Prepare signing request
 4. Confirm signing intent
-5. Sign & verify
-6. Show verification report bằng status badge
-7. Advanced details chỉ mở khi cần
+5. Ký PDF/PAdES-B-B bằng pyHanko
+6. Download signed PDF
+7. Verify signed PDF
+8. Show verification report bằng status badge
+9. Advanced details chỉ mở khi cần
 ```
+
+Flow chính của User Signing Mode là **Ký PDF/PAdES**. Flow “ký payload demo” chỉ là advanced demo để thuyết trình cơ chế canonical payload, nonce và RSA-PSS.
+
+### Certificate Lifecycle Mode
+
+```text
+Root CA demo
+→ Intermediate CA demo
+→ Enrollment chứa public key + proof-of-possession
+→ Issue User Signing Certificate
+→ Activate certificate
+→ Revoke/status/chain
+```
+
+Key generation khác certificate issuance:
+
+```text
+Key generation
+  = sinh key pair cho user/device/signer.
+
+Certificate issuance
+  = CA kiểm tra identity + public key + proof-of-possession,
+    rồi ký X.509 certificate bằng CA private key.
+```
+
+Demo hiện có bootstrap certificate để chạy nhanh flow ban đầu, đồng thời có lifecycle-issued certificate để minh họa enrollment/issue/activate/revoke. Production không nên để CA tự sinh private key người dùng.
 
 ### Pipeline Demo Mode
 
@@ -162,9 +194,10 @@ Bản này là demo học thuật, chưa phải production:
 
 - Chưa có HSM/KMS thật.
 - Root CA demo chạy local, production phải offline.
-- Timestamp là demo JSON, chưa phải RFC3161 TSA thật.
+- PAdES hiện là PAdES-B-B demo bằng pyHanko; chưa phải PAdES-B-T/B-LT/B-LTA.
+- Timestamp là demo JSON trong payload demo, chưa phải RFC3161 TSA thật.
 - Revocation là local demo list, chưa phải OCSP/CRL thật.
-- PAdES adapter có boundary cho pyHanko nhưng cần cấu hình chứng thư/chain thật để ký PDF pháp lý.
+- PDF/PAdES verification dùng SecureDoc Demo Root CA local, chưa phải public trusted CA.
 - Legal readiness luôn `false` trong demo.
 - User private key trong demo có thể được backend mô phỏng như signing service; production nên dùng browser non-extractable key, smartcard, USB token, HSM/KMS hoặc remote signing đạt chuẩn.
 

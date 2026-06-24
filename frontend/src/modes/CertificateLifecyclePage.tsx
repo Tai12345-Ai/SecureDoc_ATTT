@@ -94,10 +94,26 @@ export function CertificateLifecyclePage() {
           <div className="summary-grid">
             <p><span>Lifecycle</span><strong>{status.lifecycle_status}</strong></p>
             <p><span>Revocation</span><strong>{status.revocation_status}</strong></p>
+            <p><span>Effective</span><strong>{status.effective_status}</strong></p>
             <p><span>Profile</span><strong>{status.profile_id}</strong></p>
             <p><span>Key source</span><strong>{status.key_source}</strong></p>
+            <p><span>Origin</span><strong>{status.certificate_origin}</strong></p>
+            <p><span>X.509 profile</span><strong>{status.profile_validation?.valid ? "valid" : "invalid"}</strong></p>
           </div>
           <p className="hint">{status.warning}</p>
+          {status.profile_validation?.checks && (
+            <div className="checks">
+              {status.profile_validation.checks.map((check: any) => (
+                <div className={check.ok ? "check-card ok" : "check-card bad"} key={check.key}>
+                  <div className="check-icon">{check.ok ? "✓" : "!"}</div>
+                  <div>
+                    <strong>{check.label}</strong>
+                    <p>{check.message}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

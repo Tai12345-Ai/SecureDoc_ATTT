@@ -33,6 +33,7 @@ from app.services.pki_service import (
     issue_user_certificate_from_public_key,
     load_certificate_from_path,
     load_public_key_pem,
+    validate_document_signing_certificate_profile,
     write_certificate_pem,
 )
 
@@ -220,6 +221,7 @@ def issue_enrollment(enrollment_id: str, activate: bool = False) -> Dict:
         "revoked_at": None,
         "superseded_by": None,
         "key_source": "external_public_key",
+        "origin": "lifecycle_issued",
         "created_at": _now(),
     }
 
@@ -245,8 +247,8 @@ def activate_certificate(serial: str) -> Dict:
         raise ValueError("Unknown certificate")
 
     status = get_certificate_status(serial)
-    if status["lifecycle_status"] in {"revoked", "expired"}:
-        raise ValueError(f"Cannot activate certificate with status {status['lifecycle_status']}")
+    if status["effective_status"] in {"revoked", "expired"}:
+        raise ValueError(f"Cannot activate certificate with status {status['effective_status']}")
 
     email = _email_from_record(record)
     for cert in certificates:
@@ -290,6 +292,14 @@ def _derive_status(record: Dict) -> str:
     return record["status"]
 
 
+def _effective_status(lifecycle_status: str, revocation_status: str) -> str:
+    if revocation_status == "revoked":
+        return "revoked"
+    if lifecycle_status in {"revoked", "expired", "superseded", "rejected"}:
+        return lifecycle_status
+    return lifecycle_status
+
+
 def get_certificate_status(serial: str) -> Dict:
     sync_demo_certificate_record()
     record = next((c for c in _read_certificates() if c["serial"] == serial), None)
@@ -299,17 +309,23 @@ def get_certificate_status(serial: str) -> Dict:
     cert = load_certificate_from_path(record["pem_path"])
     lifecycle_status = _derive_status(record)
     rev = revocation_service.status(serial)
+    effective_status = _effective_status(lifecycle_status, rev["status"])
+    profile_validation = validate_document_signing_certificate_profile(cert)
     return {
         "serial": serial,
         "lifecycle_status": lifecycle_status,
         "revocation_status": rev["status"],
-        "revoked": lifecycle_status == "revoked" or rev["revoked"],
+        "effective_status": effective_status,
+        "revoked": effective_status == "revoked",
         "profile_id": record["profile_id"],
+        "profile_validation": profile_validation,
         "subject": cert.subject.rfc4514_string(),
         "issuer": cert.issuer.rfc4514_string(),
         "valid_from": cert.not_valid_before_utc.isoformat(),
         "valid_to": cert.not_valid_after_utc.isoformat(),
         "key_source": record.get("key_source", "unknown"),
+        "certificate_origin": record.get("origin", "unknown"),
+        "is_bootstrap_demo_certificate": record.get("origin") == "bootstrap_demo",
         "source": "DEMO_JSON_CERTIFICATE_LIFECYCLE",
         "warning": "Production requires database persistence, RBAC and real CRL/OCSP.",
     }
@@ -362,7 +378,9 @@ def sync_demo_certificate_record(force_active: bool = False):
         init_demo_pki()
     cert = load_certificate_from_path(USER_CERT)
     serial = str(cert.serial_number)
-    certificates = [c for c in _read_certificates() if c["serial"] != serial]
+    existing_certificates = _read_certificates()
+    existing_demo = next((c for c in existing_certificates if c["serial"] == serial), None)
+    certificates = [c for c in existing_certificates if c["serial"] != serial]
     if force_active:
         for record in certificates:
             if record.get("status") == "active" and _email_from_record(record) == "alice@example.com":
@@ -372,7 +390,18 @@ def sync_demo_certificate_record(force_active: bool = False):
         c.get("status") == "active" and _email_from_record(c) == "alice@example.com"
         for c in certificates
     )
-    demo_status = "active" if force_active else ("superseded" if has_other_active_for_alice else "active")
+    has_lifecycle_for_alice = any(
+        c.get("origin") == "lifecycle_issued" and _email_from_record(c) == "alice@example.com"
+        for c in certificates
+    )
+    if force_active:
+        demo_status = "active"
+    elif existing_demo and existing_demo.get("status") in {"active", "revoked"}:
+        demo_status = existing_demo["status"]
+    elif has_other_active_for_alice or (has_lifecycle_for_alice and existing_demo and existing_demo.get("status") == "superseded"):
+        demo_status = "superseded"
+    else:
+        demo_status = "active"
     if revocation_service.is_revoked(serial):
         demo_status = "revoked"
 
@@ -389,6 +418,7 @@ def sync_demo_certificate_record(force_active: bool = False):
         "revoked_at": None,
         "superseded_by": None,
         "key_source": "demo_backend_signing_key",
+        "origin": "bootstrap_demo",
         "created_at": _now(),
     }
     certificates.append(demo_record)

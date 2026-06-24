@@ -46,8 +46,10 @@ def _safe_filename(filename: str | None) -> str:
 
 def _assert_certificate_usable(certificate_serial: str):
     cert_status = get_certificate_status(certificate_serial)
-    if cert_status["lifecycle_status"] != "active" or cert_status["revoked"]:
-        raise ValueError(f"Certificate is not active/good: {cert_status['lifecycle_status']}")
+    if cert_status["effective_status"] != "active":
+        raise ValueError(f"Certificate is not active/good: {cert_status['effective_status']}")
+    if not cert_status["profile_validation"]["valid"]:
+        raise ValueError("Certificate profile is not valid for document signing")
     return cert_status
 
 def _assert_demo_signing_key_matches_active_certificate():
@@ -256,6 +258,26 @@ def sign_pdf_request(request_id: str) -> Dict:
 
 def get_signed_pdf_record(file_id: str) -> Dict | None:
     return _SIGNED_PDF_FILES.get(file_id)
+
+def get_signing_history() -> list[Dict]:
+    records = sorted(
+        _SIGNED_PDF_FILES.values(),
+        key=lambda item: item.get("created_at", ""),
+        reverse=True,
+    )
+    return [
+        {
+            "file_id": record["file_id"],
+            "request_id": record["request_id"],
+            "original_filename": record["original_filename"],
+            "signer_certificate_serial": record["signer_certificate_serial"],
+            "pades_profile": record["pades_profile"],
+            "created_at": record["created_at"],
+            "signed_document_hash": record["signed_document_hash"],
+            "download_url": f"/api/user-signing/signed-files/{record['file_id']}",
+        }
+        for record in records
+    ]
 
 def verify_signed_package(request_id: str, signed_package: Dict | None = None) -> Dict:
     record = _REQUESTS.get(request_id)

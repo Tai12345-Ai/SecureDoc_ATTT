@@ -156,6 +156,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
 
 
 def _report(accepted: bool, checks: list[Dict], advanced: Dict) -> Dict:
+    advanced.setdefault("pades_profile", "PAdES-B-B")
     return {
         "status": "accepted" if accepted else "rejected",
         "accepted": accepted,
