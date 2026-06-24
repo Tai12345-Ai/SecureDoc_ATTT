@@ -113,19 +113,22 @@ export function UserSigningPage() {
   }
 
   return (
-    <section className="card">
-      <div className="section-title">
+    <section className="card mode-page signing-page" aria-busy={!!busy}>
+      <div className="section-title mode-header">
         <div>
           <h2>User Signing Mode</h2>
           <p>Giao diện mô phỏng người dùng thật: chọn tài liệu, xác nhận ý chí ký, ký và xem kết quả xác minh.</p>
         </div>
-        <div className="mode-pill">Production-like UX</div>
+        <div className="mode-outcome">
+          <strong>Primary job</strong>
+          <span>Prepare, approve, sign, and verify one PDF.</span>
+        </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
 
       <div className="user-grid">
-        <aside className="sidebar-card">
+        <aside className="sidebar-card identity-panel">
           <h3>Người ký</h3>
           <p><strong>{workspace?.user?.name || "Alice Demo Signer"}</strong></p>
           <p>{workspace?.user?.email || "alice@example.com"}</p>
@@ -142,7 +145,7 @@ export function UserSigningPage() {
           ) : <p>Đang tải chứng thư...</p>}
         </aside>
 
-        <div className="main-flow">
+        <div className="main-flow signing-flow">
           <div className="progress">
             <div className={file ? "done" : ""}>1. Chọn tài liệu</div>
             <div className={prepared ? "done" : ""}>2. Tạo yêu cầu ký</div>
@@ -150,22 +153,22 @@ export function UserSigningPage() {
             <div className={pdfResult || result ? "done" : ""}>4. Ký & xác minh</div>
           </div>
 
-          <div className="form-card">
-            <label>Tài liệu cần ký</label>
-            <input type="file" accept="application/pdf,.pdf" onChange={e => setFile(e.target.files?.[0] || null)} />
+          <div className="form-card primary-task-card">
+            <label htmlFor="signing-file">Tài liệu cần ký</label>
+            <input id="signing-file" type="file" accept="application/pdf,.pdf" onChange={e => setFile(e.target.files?.[0] || null)} />
 
-            <label>Mục đích ký</label>
-            <input value={purpose} onChange={e => setPurpose(e.target.value)} />
+            <label htmlFor="signing-purpose">Mục đích ký</label>
+            <input id="signing-purpose" value={purpose} onChange={e => setPurpose(e.target.value)} />
 
             <div className="actions">
-              <button onClick={doPrepare} disabled={!file || !!busy}>{busy === "prepare" ? "Đang tạo..." : "Tạo yêu cầu ký"}</button>
-              <button onClick={doConfirm} disabled={!prepared || !!busy}>{busy === "confirm" ? "Đang xác nhận..." : "Xác nhận OTP/TOTP"}</button>
-              <button className="primary" onClick={doSignPdf} disabled={!confirmed || !!busy}>{busy === "sign-pdf" ? "Đang ký PDF..." : "Ký PDF/PAdES"}</button>
+              <button type="button" onClick={doPrepare} disabled={!file || !!busy}>{busy === "prepare" ? "Đang tạo..." : "Tạo yêu cầu ký"}</button>
+              <button type="button" onClick={doConfirm} disabled={!prepared || !!busy}>{busy === "confirm" ? "Đang xác nhận..." : "Xác nhận OTP/TOTP"}</button>
+              <button className="primary" type="button" onClick={doSignPdf} disabled={!confirmed || !!busy}>{busy === "sign-pdf" ? "Đang ký PDF..." : "Ký PDF/PAdES"}</button>
             </div>
             <details className="advanced-demo">
               <summary>Advanced demo: ký canonical payload</summary>
               <p className="hint">Flow chính của User Mode là ký PDF/PAdES. Nút này chỉ phục vụ thuyết trình cơ chế hash, nonce và canonical JSON.</p>
-              <button onClick={doSign} disabled={!confirmed || !!busy}>{busy === "sign" ? "Đang ký..." : "Ký payload demo"}</button>
+              <button type="button" onClick={doSign} disabled={!confirmed || !!busy}>{busy === "sign" ? "Đang ký..." : "Ký payload demo"}</button>
             </details>
           </div>
 
@@ -201,7 +204,7 @@ export function UserSigningPage() {
           )}
 
           {result && (
-            <div className={result.status === "accepted" ? "final-card accepted" : "final-card rejected"}>
+            <div className={result.status === "accepted" ? "final-card accepted" : "final-card rejected"} aria-live="polite">
               <h2>{result.title}</h2>
               <p>{result.message}</p>
 
@@ -229,8 +232,9 @@ export function UserSigningPage() {
             <h3>Verify another signed PDF</h3>
             <p className="hint">Dùng để kiểm tra một PDF đã ký độc lập với signing request hiện tại.</p>
             <div className="actions">
-              <input type="file" accept="application/pdf,.pdf" onChange={e => setVerifyFile(e.target.files?.[0] || null)} />
-              <button onClick={doVerifyPdf} disabled={!verifyFile || !!busy}>{busy === "verify-pdf" ? "Đang verify..." : "Verify PDF"}</button>
+              <label className="sr-only" htmlFor="verify-file">Signed PDF to verify</label>
+              <input id="verify-file" type="file" accept="application/pdf,.pdf" onChange={e => setVerifyFile(e.target.files?.[0] || null)} />
+              <button type="button" onClick={doVerifyPdf} disabled={!verifyFile || !!busy}>{busy === "verify-pdf" ? "Đang verify..." : "Verify PDF"}</button>
             </div>
             {verifyReport && <VerificationSummary report={verifyReport} title="Uploaded PDF verification" />}
           </div>

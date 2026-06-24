@@ -124,82 +124,85 @@ export function SecurityServicesPage() {
   }
 
   return (
-    <section className="card">
-      <div className="section-title">
+    <section className="card mode-page security-page" aria-busy={!!busy}>
+      <div className="section-title mode-header">
         <div>
           <h2>Trust & Key Services</h2>
           <p>Advanced Security Services — Phase 3–5 technical demo. Đây là console kỹ thuật cho timestamp, revocation, key custody và remote signing; không phải luồng người dùng cuối.</p>
         </div>
-        <div className="mode-pill">Technical services</div>
+        <div className="mode-outcome">
+          <strong>Service console</strong>
+          <span>Timestamp, revocation, key proof, and remote signing.</span>
+        </div>
       </div>
 
-      <div className="role-grid">
+      <div className="role-grid service-grid">
         <div className="role-card"><strong>Timestamp</strong><p>Chứng minh hash/chữ ký tồn tại tại một thời điểm.</p><code>DSS / RFC3161 direction</code></div>
         <div className="role-card"><strong>Revocation</strong><p>Kiểm tra chứng thư còn good hay đã bị thu hồi.</p><code>EJBCA / CRL / OCSP direction</code></div>
         <div className="role-card"><strong>Browser key</strong><p>Private key nằm ở browser, backend chỉ nhận public key + PoP.</p><code>WebCrypto / PKI</code></div>
         <div className="role-card"><strong>Remote signing</strong><p>Signing service kiểm tra policy/MFA rồi ký bằng key được bảo vệ.</p><code>SignServer direction</code></div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
 
-      <div className="summary-card">
+      <div className="summary-card service-card">
         <h3>Timestamp Service</h3>
         <p className="hint">Message imprint là SHA-256 hash của tài liệu hoặc chữ ký, không phải nội dung tài liệu gốc. Bản hiện tại là signed demo TSA token, chưa phải RFC3161 TimeStampToken thật.</p>
-        <label>Message imprint SHA-256</label>
-        <input value={imprint} onChange={e => setImprint(e.target.value)} />
+        <label htmlFor="timestamp-imprint">Message imprint SHA-256</label>
+        <input id="timestamp-imprint" value={imprint} onChange={e => setImprint(e.target.value)} />
         <div className="actions">
-          <button className="primary" onClick={() => run("timestamp", async () => setTimestampToken(await issueTimestamp(imprint)))} disabled={!!busy}>Issue signed timestamp</button>
-          <button onClick={() => run("verify-ts", async () => setTimestampVerify(await verifyTimestamp(timestampToken, imprint)))} disabled={!timestampToken || !!busy}>Verify timestamp</button>
+          <button className="primary" type="button" onClick={() => run("timestamp", async () => setTimestampToken(await issueTimestamp(imprint)))} disabled={!!busy}>Issue signed timestamp</button>
+          <button type="button" onClick={() => run("verify-ts", async () => setTimestampVerify(await verifyTimestamp(timestampToken, imprint)))} disabled={!timestampToken || !!busy}>Verify timestamp</button>
         </div>
-        {timestampVerify && <p className={timestampVerify.ok ? "green" : "error"}>{timestampVerify.message}</p>}
+        {timestampVerify && <p className={timestampVerify.ok ? "green" : "error"} role={timestampVerify.ok ? "status" : "alert"}>{timestampVerify.message}</p>}
         {timestampToken && <AdvancedDetails data={{ timestampToken, timestampVerify }} />}
       </div>
 
-      <div className="summary-card">
+      <div className="summary-card service-card">
         <h3>Revocation Service</h3>
         <p className="hint">Demo CRL hiện chưa ký theo chuẩn X.509 CRL. Production cần signed CRL hoặc OCSP và policy kiểm tra revocation tại signing time nếu có trusted timestamp.</p>
-        <label>Certificate serial</label>
-        <input value={serial} onChange={e => setSerial(e.target.value)} placeholder="Paste certificate serial" />
+        <label htmlFor="revocation-serial">Certificate serial</label>
+        <input id="revocation-serial" value={serial} onChange={e => setSerial(e.target.value)} placeholder="Paste certificate serial" />
         <div className="actions">
-          <button onClick={() => run("rev-status", async () => setRevocationResult(await getRevocationStatus(serial)))} disabled={!serial || !!busy}>Check status</button>
-          <button onClick={() => run("revoke", async () => setRevocationResult(await revokeSerial(serial)))} disabled={!serial || !!busy}>Revoke serial</button>
-          <button onClick={() => run("crl", async () => setRevocationResult(await getDemoCrl()))} disabled={!!busy}>View demo CRL</button>
+          <button type="button" onClick={() => run("rev-status", async () => setRevocationResult(await getRevocationStatus(serial)))} disabled={!serial || !!busy}>Check status</button>
+          <button type="button" onClick={() => run("revoke", async () => setRevocationResult(await revokeSerial(serial)))} disabled={!serial || !!busy}>Revoke serial</button>
+          <button type="button" onClick={() => run("crl", async () => setRevocationResult(await getDemoCrl()))} disabled={!!busy}>View demo CRL</button>
         </div>
         {revocationResult && <AdvancedDetails data={revocationResult} />}
       </div>
 
-      <div className="summary-card">
+      <div className="summary-card service-card">
         <h3>Browser Local Key Enrollment</h3>
         <p className="hint">The private key stays in this browser session. Backend receives only the public key and proof-of-possession signature.</p>
         <p className="hint">Submitting proof activates the browser-issued certificate for Alice. Return to User Signing and prepare a new request after this step.</p>
         <div className="actions">
-          <button className="primary" onClick={generateBrowserKey} disabled={!!busy}>Generate browser key</button>
-          <button onClick={requestChallenge} disabled={!publicKeyPem || !!busy}>Request challenge</button>
-          <button onClick={submitProof} disabled={!challenge || !keyPair || !!busy}>Submit proof</button>
+          <button className="primary" type="button" onClick={generateBrowserKey} disabled={!!busy}>Generate browser key</button>
+          <button type="button" onClick={requestChallenge} disabled={!publicKeyPem || !!busy}>Request challenge</button>
+          <button type="button" onClick={submitProof} disabled={!challenge || !keyPair || !!busy}>Submit proof</button>
         </div>
         {keyEnrollmentResult && <AdvancedDetails data={keyEnrollmentResult} />}
       </div>
 
-      <div className="summary-card">
+      <div className="summary-card service-card">
         <h3>Browser Payload Signing</h3>
         <p className="hint">Prepare and confirm a request in User Signing, then paste its requestId and canonical payload JSON from Advanced details. This demonstrates browser-side signing; PDF/PAdES browser signing is a future integration.</p>
-        <label>Request ID</label>
-        <input value={clientRequestId} onChange={e => setClientRequestId(e.target.value)} placeholder="req_..." />
-        <label>Canonical payload JSON</label>
-        <textarea value={clientPayloadJson} onChange={e => setClientPayloadJson(e.target.value)} rows={5} placeholder='{"certificateSerial":"...","documentHash":"..."}' />
+        <label htmlFor="browser-request-id">Request ID</label>
+        <input id="browser-request-id" value={clientRequestId} onChange={e => setClientRequestId(e.target.value)} placeholder="req_..." />
+        <label htmlFor="browser-payload-json">Canonical payload JSON</label>
+        <textarea id="browser-payload-json" value={clientPayloadJson} onChange={e => setClientPayloadJson(e.target.value)} rows={5} placeholder='{"certificateSerial":"...","documentHash":"..."}' />
         <div className="actions">
-          <button onClick={submitBrowserPayloadSignature} disabled={!keyPair || !clientRequestId || !clientPayloadJson || !!busy}>Sign with browser key</button>
+          <button type="button" onClick={submitBrowserPayloadSignature} disabled={!keyPair || !clientRequestId || !clientPayloadJson || !!busy}>Sign with browser key</button>
         </div>
         {clientSignatureResult && <AdvancedDetails data={clientSignatureResult} />}
       </div>
 
-      <div className="summary-card">
+      <div className="summary-card service-card">
         <h3>Remote Signing</h3>
         <p className="hint">Use a prepared and confirmed requestId from User Signing. Demo MFA code is <code>000000</code>. This mode requires the demo backend signing certificate to be active. Production should replace this with HSM/KMS/qualified remote signing.</p>
-        <label>Request ID</label>
-        <input value={remoteRequestId} onChange={e => setRemoteRequestId(e.target.value)} placeholder="req_..." />
+        <label htmlFor="remote-request-id">Request ID</label>
+        <input id="remote-request-id" value={remoteRequestId} onChange={e => setRemoteRequestId(e.target.value)} placeholder="req_..." />
         <div className="actions">
-          <button onClick={() => run("remote-sign", async () => setRemoteResult(await remoteSign(remoteRequestId, "000000")))} disabled={!remoteRequestId || !!busy}>Remote sign</button>
+          <button type="button" onClick={() => run("remote-sign", async () => setRemoteResult(await remoteSign(remoteRequestId, "000000")))} disabled={!remoteRequestId || !!busy}>Remote sign</button>
         </div>
         {remoteResult && <AdvancedDetails data={remoteResult} />}
       </div>

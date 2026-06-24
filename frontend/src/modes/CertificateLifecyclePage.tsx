@@ -60,23 +60,26 @@ export function CertificateLifecyclePage() {
   }
 
   return (
-    <section className="card">
-      <div className="section-title">
+    <section className="card mode-page certificate-page" aria-busy={!!busy}>
+      <div className="section-title mode-header">
         <div>
           <h2>Certificate Lifecycle</h2>
           <p>Demo Phase 2: enrollment, issue, active certificate, chain, status và revoke.</p>
         </div>
-        <div className="mode-pill">EJBCA-style demo</div>
+        <div className="mode-outcome">
+          <strong>Lifecycle job</strong>
+          <span>Issue, inspect, chain, and revoke certificates.</span>
+        </div>
       </div>
 
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error" role="alert">{error}</div>}
 
-      <div className="actions">
-        <button className="primary" onClick={issueDemo} disabled={!!busy}>{busy === "issue" ? "Đang issue..." : "Enroll + Issue demo cert"}</button>
-        <button onClick={revokeActive} disabled={!active || !!busy}>{busy === "revoke" ? "Đang revoke..." : "Revoke active cert"}</button>
+      <div className="actions mode-command-bar">
+        <button className="primary" type="button" onClick={issueDemo} disabled={!!busy}>{busy === "issue" ? "Đang issue..." : "Enroll + Issue demo cert"}</button>
+        <button type="button" onClick={revokeActive} disabled={!active || !!busy}>{busy === "revoke" ? "Đang revoke..." : "Revoke active cert"}</button>
       </div>
 
-      <div className="summary-card">
+      <div className="summary-card priority-card">
         <h3>My active certificate</h3>
         {active ? (
           <div className="summary-grid">
@@ -105,7 +108,7 @@ export function CertificateLifecyclePage() {
             <div className="checks">
               {status.profile_validation.checks.map((check: any) => (
                 <div className={check.ok ? "check-card ok" : "check-card bad"} key={check.key}>
-                  <div className="check-icon">{check.ok ? "✓" : "!"}</div>
+                  <div className="check-icon" aria-hidden="true">{check.ok ? "✓" : "!"}</div>
                   <div>
                     <strong>{check.label}</strong>
                     <p>{check.message}</p>

@@ -147,16 +147,20 @@ export function PipelineDemoPage() {
   const verificationChecks = full?.result?.checks || [];
 
   return (
-    <section className="card">
-      <div className="section-title">
+    <section className="card mode-page pipeline-page" aria-busy={busy}>
+      <div className="section-title mode-header">
         <div>
           <h2>End-to-End Pipeline / ATTT Demo</h2>
           <p>Trang này không phải user flow chính. Đây là timeline thuyết trình để nối CA, user signing, verification và trust services thành một pipeline chữ ký số hoàn chỉnh.</p>
         </div>
-        <button className="primary" onClick={run}>{busy ? "Đang chạy..." : "Run full pipeline"}</button>
+        <div className="mode-outcome action-outcome">
+          <strong>Demo run</strong>
+          <span>Execute the full CA to verification path.</span>
+          <button className="primary" type="button" onClick={run}>{busy ? "Đang chạy..." : "Run full pipeline"}</button>
+        </div>
       </div>
 
-      <div className="role-grid">
+      <div className="role-grid actor-grid">
         {actors.map(actor => (
           <div className="role-card" key={actor.name}>
             <strong>{actor.name}</strong>
@@ -166,8 +170,8 @@ export function PipelineDemoPage() {
         ))}
       </div>
 
-      <div className="pipeline-guide">
-        <div className="summary-card no-margin">
+      <div className="pipeline-guide narrative-grid">
+        <div className="summary-card no-margin narrative-card">
           <h3>Pipeline end-to-end thực sự</h3>
           <p className="hint">CA cấp chứng thư → user ký PDF → verifier kiểm tra → trust services bổ sung timestamp/revocation/audit. Nút Run full pipeline chạy nhanh một mẫu tự động; timeline dưới đây giải thích từng artifact.</p>
           <div className="timeline-list">
@@ -175,6 +179,8 @@ export function PipelineDemoPage() {
               <button
                 key={`${item.phase}-${item.title}`}
                 className={selectedTimeline?.title === item.title ? "timeline-step active" : "timeline-step"}
+                type="button"
+                aria-pressed={selectedTimeline?.title === item.title}
                 onClick={() => setSelectedTimeline(item)}
               >
                 <span>{index + 1}</span>
@@ -201,11 +207,11 @@ export function PipelineDemoPage() {
         </aside>
       </div>
 
-      <div className="pipeline-layout mt-18">
+      <div className="pipeline-layout mt-18 mapping-grid">
         <div className="step-list">
           <h3>Mapping với đề tài ATTT</h3>
           {steps.map((s, i) => (
-            <button className="step-button" key={s.id} onClick={() => clickStep(s.id)}>
+            <button className="step-button" key={s.id} type="button" onClick={() => clickStep(s.id)}>
               <span>{i + 1}</span>
               <div>
                 <strong>{s.title}</strong>
@@ -232,7 +238,7 @@ export function PipelineDemoPage() {
       </div>
 
       {full && (
-        <div className="final-card accepted">
+        <div className="final-card accepted" aria-live="polite">
           <h2>{full.title}</h2>
           <p>{full.summary}</p>
 

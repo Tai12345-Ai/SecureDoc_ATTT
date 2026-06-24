@@ -14,13 +14,13 @@ export function VerificationSummary({ report, title = "PDF verification report" 
   const total = report.checks?.length || 0;
 
   return (
-    <div className={report.accepted ? "final-card accepted" : "final-card rejected"}>
+    <div className={report.accepted ? "final-card accepted" : "final-card rejected"} aria-live="polite">
       <div className="section-title compact">
         <div>
           <h2>{title}</h2>
           <p>{report.message}</p>
         </div>
-        <div className={report.accepted ? "status-pill ok" : "status-pill bad"}>
+        <div className={report.accepted ? "status-pill ok" : "status-pill bad"} aria-label={`Verification status: ${report.accepted ? "Accepted" : "Not accepted"}`}>
           {report.accepted ? "Accepted" : "Not accepted"}
         </div>
       </div>

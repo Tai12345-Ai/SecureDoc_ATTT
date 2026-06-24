@@ -17,23 +17,26 @@ export function BlindSignaturePage() {
   }
 
   return (
-    <section className="card">
-      <div className="section-title">
+    <section className="card mode-page blind-page" aria-busy={busy}>
+      <div className="section-title mode-header">
         <div>
           <h2>Blind Signature Mode</h2>
           <p>Module riêng cho chữ ký mù: không gộp vào ký tài liệu định danh.</p>
         </div>
-        <div className="mode-pill">Privacy / Unlinkability</div>
+        <div className="mode-outcome">
+          <strong>Privacy job</strong>
+          <span>Sign a token without linking it to the original message.</span>
+        </div>
       </div>
 
-      <div className="form-card">
-        <label>Token/message cần ký mù</label>
-        <input value={message} onChange={e => setMessage(e.target.value)} />
-        <button className="primary" onClick={run}>{busy ? "Đang chạy..." : "Run blind signature flow"}</button>
+      <div className="form-card primary-task-card compact-task">
+        <label htmlFor="blind-message">Token/message cần ký mù</label>
+        <input id="blind-message" value={message} onChange={e => setMessage(e.target.value)} />
+        <button className="primary" type="button" onClick={run}>{busy ? "Đang chạy..." : "Run blind signature flow"}</button>
       </div>
 
       {result && (
-        <div className={result.verified ? "final-card accepted" : "final-card rejected"}>
+        <div className={result.verified ? "final-card accepted" : "final-card rejected"} aria-live="polite">
           <h2>{result.title}</h2>
           <p>{result.message}</p>
           <p className="hint">{result.unlinkability_note}</p>
