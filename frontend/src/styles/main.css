@@ -172,11 +172,18 @@ button:disabled {
   gap: 12px;
 }
 
-input {
+input, textarea {
   border: 1px solid #d1d5db;
   border-radius: 12px;
   padding: 12px;
   font-size: 15px;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+textarea {
+  resize: vertical;
 }
 
 .actions {

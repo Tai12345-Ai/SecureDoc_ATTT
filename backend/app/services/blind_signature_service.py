@@ -15,15 +15,31 @@ Important:
 - Do not reuse CA/TSA/document-signing keys for blind signing.
 """
 
-from Crypto.PublicKey import RSA
-from Crypto.Util.number import bytes_to_long, inverse
-from Crypto.Hash import SHA256
-from Crypto.Random import random
+_BLIND_SIGNER_KEY = None
 
-_BLIND_SIGNER_KEY = RSA.generate(2048)
+
+def _load_pycryptodome():
+    try:
+        from Crypto.PublicKey import RSA
+        from Crypto.Util.number import bytes_to_long, inverse
+        from Crypto.Hash import SHA256
+        from Crypto.Random import random
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("PyCryptodome is required for Blind Signature Mode. Install requirements.txt first.") from exc
+    return RSA, bytes_to_long, inverse, SHA256, random
+
+
+def _blind_signer_key():
+    global _BLIND_SIGNER_KEY
+    RSA, _, _, _, _ = _load_pycryptodome()
+    if _BLIND_SIGNER_KEY is None:
+        _BLIND_SIGNER_KEY = RSA.generate(2048)
+    return _BLIND_SIGNER_KEY
 
 def run_blind_signature_flow(message: str) -> dict:
-    public_key = _BLIND_SIGNER_KEY.publickey()
+    _, bytes_to_long, inverse, SHA256, random = _load_pycryptodome()
+    blind_signer_key = _blind_signer_key()
+    public_key = blind_signer_key.publickey()
     message_bytes = message.encode("utf-8")
     message_hash = SHA256.new(message_bytes).digest()
     m = bytes_to_long(message_hash)
@@ -39,7 +55,7 @@ def run_blind_signature_flow(message: str) -> dict:
             continue
 
     blinded = (m * pow(r, e, n)) % n
-    blind_signature = pow(blinded, _BLIND_SIGNER_KEY.d, _BLIND_SIGNER_KEY.n)
+    blind_signature = pow(blinded, blind_signer_key.d, blind_signer_key.n)
     unblinded_signature = (blind_signature * r_inv) % n
     recovered = pow(unblinded_signature, e, n)
     verified = recovered == m

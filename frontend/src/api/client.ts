@@ -54,6 +54,12 @@ export function signPdf(requestId: string) {
   });
 }
 
+export function submitClientSignature(requestId: string, signatureBase64: string) {
+  return jfetch(`${API_BASE}/user-signing/submit-client-signature?request_id=${encodeURIComponent(requestId)}&signature_base64=${encodeURIComponent(signatureBase64)}`, {
+    method: "POST"
+  });
+}
+
 export function signedPdfUrl(fileId: string) {
   return `${API_BASE}/user-signing/signed-files/${encodeURIComponent(fileId)}`;
 }
@@ -92,6 +98,65 @@ export function getCertificateChain(serial: string) {
 export function revokeCertificate(serial: string) {
   return jfetch(`${API_BASE}/certificates/${encodeURIComponent(serial)}/revoke`, {
     method: "POST"
+  });
+}
+
+export function issueTimestamp(messageImprintSha256: string) {
+  return jfetch(`${API_BASE}/timestamp/issue`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ message_imprint_sha256: messageImprintSha256 })
+  });
+}
+
+export function verifyTimestamp(token: any, expectedImprintSha256: string) {
+  return jfetch(`${API_BASE}/timestamp/verify`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ token, expected_imprint_sha256: expectedImprintSha256 })
+  });
+}
+
+export function getDemoCrl() {
+  return jfetch(`${API_BASE}/revocation/crl`);
+}
+
+export function getRevocationStatus(serial: string) {
+  return jfetch(`${API_BASE}/revocation/status/${encodeURIComponent(serial)}`);
+}
+
+export function revokeSerial(serial: string, reason = "cessationOfOperation") {
+  return jfetch(`${API_BASE}/revocation/revoke/${encodeURIComponent(serial)}?reason=${encodeURIComponent(reason)}`, {
+    method: "POST"
+  });
+}
+
+export function createKeyEnrollmentChallenge(displayName: string, email: string, publicKeyPem: string) {
+  return jfetch(`${API_BASE}/key-enrollment/challenge`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ display_name: displayName, email, public_key_pem: publicKeyPem })
+  });
+}
+
+export function submitKeyEnrollmentProof(challengeId: string, proofSignatureBase64: string, issueCertificate = true, activateCertificate = false) {
+  return jfetch(`${API_BASE}/key-enrollment/submit-public-key`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      challenge_id: challengeId,
+      proof_signature_base64: proofSignatureBase64,
+      issue_certificate: issueCertificate,
+      activate_certificate: activateCertificate
+    })
+  });
+}
+
+export function remoteSign(requestId: string, mfaCode: string) {
+  return jfetch(`${API_BASE}/remote-signing/sign`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ request_id: requestId, mfa_code: mfaCode })
   });
 }
 

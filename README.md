@@ -22,7 +22,7 @@ Bản v4 thiết kế lại SecureDoc theo hướng **web demo chữ ký số đ
 
 ## Mục tiêu
 
-Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend ăn khớp theo 4 mode:
+Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend ăn khớp theo các mode chính:
 
 ```text
 1. Pipeline Demo Mode
@@ -37,6 +37,9 @@ Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend
 
 4. Blind Signature Mode
    Demo chữ ký mù riêng: blind → sign blinded → unblind → verify.
+
+4. API demo mở rộng
+   Timestamp service, revocation service, key enrollment và remote signing.
 ```
 
 ## Kiến trúc
@@ -54,6 +57,9 @@ backend/
 ├── Signing Service
 ├── Verification Service
 ├── Timestamp Service
+├── Revocation Service
+├── Key Enrollment Service
+├── Remote Signing Service
 ├── Audit Service
 ├── PAdES Adapter
 └── Blind Signature Service
@@ -181,6 +187,38 @@ Init Demo PKI
 → Audit
 ```
 
+### Timestamp / Revocation / Key Custody API
+
+```text
+POST /api/timestamp/issue
+POST /api/timestamp/verify
+GET  /api/revocation/crl
+GET  /api/revocation/status/{serial}
+POST /api/revocation/revoke/{serial}
+POST /api/key-enrollment/challenge
+POST /api/key-enrollment/submit-public-key
+POST /api/user-signing/submit-client-signature
+POST /api/remote-signing/sign
+```
+
+Timestamp hiện là signed demo TSA token bằng key riêng của TSA. Nó chưa phải RFC3161 TimeStampToken, nhưng không còn là JSON unsigned.
+
+Revocation hiện có registry local ghi `revoked_at`; verification policy phân biệt:
+
+```text
+trusted timestamp → check revocation tại signing time
+không có trusted timestamp → check revocation tại verify time
+```
+
+Key custody hiện có 2 hướng demo:
+
+```text
+Browser/local-key style: public key + proof-of-possession challenge
+Remote signing style: backend giữ demo key, kiểm tra policy + demo MFA trước khi ký
+```
+
+Frontend có tab `Security Services` để chạy nhanh các demo Phase 3-5: issue/verify timestamp, check/revoke certificate serial, key enrollment, browser payload signing và remote signing.
+
 ### Blind Signature Mode
 
 ```text
@@ -216,13 +254,13 @@ Bản này là demo học thuật, chưa phải production:
 - Chưa có HSM/KMS thật.
 - Root CA demo chạy local, production phải offline.
 - PAdES hiện là PAdES-B-B demo bằng pyHanko; chưa phải PAdES-B-T/B-LT/B-LTA.
-- Timestamp là demo JSON trong payload demo, chưa phải RFC3161 TSA thật.
-- Revocation là local demo list, chưa phải OCSP/CRL thật.
+- Timestamp là signed demo TSA token trong payload demo, chưa phải RFC3161 TSA thật.
+- Revocation là local registry/unsigned demo CRL, chưa phải OCSP/CRL thật.
 - Signing history hiện là in-memory; restart backend sẽ mất history.
 - Certificate lifecycle hiện lưu JSON trong `data/certificates`; production cần DB, RBAC và audit production.
 - PDF/PAdES verification dùng SecureDoc Demo Root CA local, chưa phải public trusted CA.
 - Legal readiness luôn `false` trong demo.
-- User private key trong demo có thể được backend mô phỏng như signing service; production nên dùng browser non-extractable key, smartcard, USB token, HSM/KMS hoặc remote signing đạt chuẩn.
+- User private key trong demo có thể được backend mô phỏng như remote signing service; production nên dùng browser non-extractable key, smartcard, USB token, HSM/KMS hoặc remote signing đạt chuẩn.
 
 ## Vì sao không show JSON trong User Mode?
 

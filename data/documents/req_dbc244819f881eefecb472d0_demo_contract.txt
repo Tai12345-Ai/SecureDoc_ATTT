@@ -1,1 +1,0 @@
-SecureDoc v4 demo contract

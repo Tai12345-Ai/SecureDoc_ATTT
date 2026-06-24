@@ -178,3 +178,145 @@ def test_ca_certificate_profiles_have_required_extensions():
     intermediate_profile = validate_ca_certificate_profile(get_intermediate_certificate())
     assert root_profile["valid"] is True
     assert intermediate_profile["valid"] is True
+
+
+def test_signed_timestamp_token_verifies_and_tamper_fails():
+    from app.services.timestamp_service import issue_demo_timestamp, verify_demo_timestamp
+
+    imprint = "a" * 64
+    token = issue_demo_timestamp(imprint)
+    assert token["tokenType"] == "SECUREDOC_DEMO_TSA_TOKEN_V1"
+    verified = verify_demo_timestamp(token, imprint)
+    assert verified["ok"] is True
+    assert verified["trusted"] is True
+
+    token["messageImprintSha256"] = "b" * 64
+    tampered = verify_demo_timestamp(token, imprint)
+    assert tampered["ok"] is False
+
+
+def test_revocation_after_signing_is_accepted_with_trusted_timestamp():
+    from app.services.pki_service import init_demo_pki
+    from app.services.signing_service import prepare_request, confirm_intent, sign_and_verify, verify_signed_package
+    from app.services.revocation_service import revoke
+
+    pki = init_demo_pki(force=True)
+    cert_serial = pki["user_certificate"]["serial"]
+    prepared = prepare_request("test.txt", b"hello", "test signing", cert_serial)
+    confirm_intent(prepared["request_id"])
+    initial = sign_and_verify(prepared["request_id"])
+    assert initial["status"] == "accepted"
+
+    revoke(cert_serial)
+    verified_again = verify_signed_package(prepared["request_id"])
+    assert verified_again["status"] == "accepted"
+    assert verified_again["advanced"]["revocation_validation"]["checked_at_policy"] == "signing_time"
+
+
+def test_revocation_before_signing_rejects_new_request():
+    import pytest
+    from app.services.pki_service import init_demo_pki
+    from app.services.revocation_service import revoke
+    from app.services.signing_service import prepare_request
+
+    pki = init_demo_pki(force=True)
+    cert_serial = pki["user_certificate"]["serial"]
+    revoke(cert_serial)
+    with pytest.raises(ValueError):
+        prepare_request("test.txt", b"hello", "test signing", cert_serial)
+
+
+def test_key_enrollment_challenge_and_submit_public_key():
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.pki_service import init_demo_pki, get_demo_user_public_key_pem, get_user_private_key
+    from app.services.proof_of_possession_service import create_key_enrollment_challenge, submit_public_key_proof
+
+    init_demo_pki(force=True)
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Demo Signer",
+        email="alice@example.com",
+        public_key_pem=get_demo_user_public_key_pem(),
+    )
+    signature = get_user_private_key().sign(
+        challenge["challenge"].encode("utf-8"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    result = submit_public_key_proof(
+        challenge_id=challenge["challenge_id"],
+        proof_signature_base64=base64.b64encode(signature).decode("ascii"),
+        issue_certificate=False,
+    )
+    assert result["enrollment"]["proof_verified"] is True
+
+
+def test_key_enrollment_rejects_wrong_proof():
+    import base64
+    import pytest
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.pki_service import init_demo_pki, get_demo_user_public_key_pem, get_user_private_key
+    from app.services.proof_of_possession_service import create_key_enrollment_challenge, submit_public_key_proof
+
+    init_demo_pki(force=True)
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Demo Signer",
+        email="alice@example.com",
+        public_key_pem=get_demo_user_public_key_pem(),
+    )
+    wrong_signature = get_user_private_key().sign(
+        b"wrong challenge",
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+
+    with pytest.raises(ValueError):
+        submit_public_key_proof(
+            challenge_id=challenge["challenge_id"],
+            proof_signature_base64=base64.b64encode(wrong_signature).decode("ascii"),
+            issue_certificate=False,
+        )
+
+
+def test_client_signature_submit_verifies_payload():
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.crypto_utils import canonical_json_bytes
+    from app.services.pki_service import init_demo_pki, get_user_private_key
+    from app.services.signing_service import prepare_request, confirm_intent, submit_client_signature
+
+    pki = init_demo_pki(force=True)
+    prepared = prepare_request("test.txt", b"hello", "browser signing", pki["user_certificate"]["serial"])
+    confirm_intent(prepared["request_id"])
+    signature = get_user_private_key().sign(
+        canonical_json_bytes(prepared["advanced"]["canonical_payload"]),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+
+    result = submit_client_signature(prepared["request_id"], base64.b64encode(signature).decode("ascii"))
+    assert result["status"] == "accepted"
+    assert result["advanced"]["signed_package"]["keyCustody"] == "BROWSER_LOCAL_SIGNING"
+
+
+def test_remote_signing_requires_confirmed_intent_and_mfa():
+    import pytest
+    from app.services.pki_service import init_demo_pki
+    from app.services.signing_service import prepare_request, confirm_intent
+    from app.services.remote_signing_service import remote_sign_request
+
+    pki = init_demo_pki(force=True)
+    prepared = prepare_request("test.txt", b"hello", "remote signing", pki["user_certificate"]["serial"])
+    with pytest.raises(ValueError):
+        remote_sign_request(prepared["request_id"], "000000")
+
+    confirm_intent(prepared["request_id"])
+    with pytest.raises(ValueError):
+        remote_sign_request(prepared["request_id"], "111111")
+
+    result = remote_sign_request(prepared["request_id"], "000000")
+    assert result["report"]["status"] == "accepted"
+    assert result["remote_signing"]["privateKeyExposed"] is False
