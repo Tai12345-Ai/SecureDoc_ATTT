@@ -92,7 +92,7 @@ export function SecurityServicesPage() {
 
   async function requestChallenge() {
     await run("challenge", async () => {
-      setChallenge(await createKeyEnrollmentChallenge("Browser Demo User", "browser@example.com", publicKeyPem));
+      setChallenge(await createKeyEnrollmentChallenge("Alice Browser Key", "alice@example.com", publicKeyPem));
     });
   }
 
@@ -162,7 +162,7 @@ export function SecurityServicesPage() {
       <div className="summary-card">
         <h3>Browser Local Key Enrollment</h3>
         <p className="hint">The private key stays in this browser session. Backend receives only the public key and proof-of-possession signature.</p>
-        <p className="hint">Submitting proof activates the browser-issued certificate, which supersedes the demo backend certificate for this user.</p>
+        <p className="hint">Submitting proof activates the browser-issued certificate for Alice. Return to User Signing and prepare a new request after this step.</p>
         <div className="actions">
           <button className="primary" onClick={generateBrowserKey} disabled={!!busy}>Generate browser key</button>
           <button onClick={requestChallenge} disabled={!publicKeyPem || !!busy}>Request challenge</button>

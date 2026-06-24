@@ -12,7 +12,10 @@ def _last_hash() -> str:
     last = None
     for line in settings.audit_file.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            last = json.loads(line)
+            try:
+                last = json.loads(line)
+            except json.JSONDecodeError:
+                continue
     return last.get("eventHash", "0" * 64) if last else "0" * 64
 
 def append_event(actor: str, action: str, target: str, status: str, metadata: Optional[Dict] = None) -> Dict:
@@ -38,5 +41,12 @@ def append_event(actor: str, action: str, target: str, status: str, metadata: Op
 def list_events(limit: int = 20):
     if not settings.audit_file.exists():
         return []
-    events = [json.loads(line) for line in settings.audit_file.read_text(encoding="utf-8").splitlines() if line.strip()]
+    events = []
+    for line in settings.audit_file.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
     return events[-limit:]

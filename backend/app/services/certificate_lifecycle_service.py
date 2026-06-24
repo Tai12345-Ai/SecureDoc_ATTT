@@ -48,7 +48,12 @@ def _now() -> str:
 def _read_json(path: Path, default):
     if not path.exists():
         return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        # Demo JSON stores are runtime artifacts. If a prior run or merge left
+        # them corrupt, rebuild from the current demo PKI instead of crashing.
+        return default
 
 
 def _write_json(path: Path, data):

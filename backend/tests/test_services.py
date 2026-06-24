@@ -302,6 +302,51 @@ def test_client_signature_submit_verifies_payload():
     assert result["advanced"]["signed_package"]["keyCustody"] == "BROWSER_LOCAL_SIGNING"
 
 
+def test_external_browser_key_enrollment_can_client_sign_payload():
+    import base64
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding, rsa
+    from app.services.crypto_utils import canonical_json_bytes
+    from app.services.pki_service import init_demo_pki
+    from app.services.proof_of_possession_service import create_key_enrollment_challenge, submit_public_key_proof
+    from app.services.signing_service import prepare_request, confirm_intent, submit_client_signature
+
+    init_demo_pki(force=True)
+    browser_key = rsa.generate_private_key(public_exponent=65537, key_size=3072)
+    public_key_pem = browser_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Browser Key",
+        email="alice@example.com",
+        public_key_pem=public_key_pem,
+    )
+    proof_signature = browser_key.sign(
+        challenge["challenge"].encode("utf-8"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    enrollment = submit_public_key_proof(
+        challenge_id=challenge["challenge_id"],
+        proof_signature_base64=base64.b64encode(proof_signature).decode("ascii"),
+        issue_certificate=True,
+        activate_certificate=True,
+    )
+    serial = enrollment["certificate"]["serial"]
+    prepared = prepare_request("test.txt", b"hello browser key", "browser local signing", serial)
+    confirm_intent(prepared["request_id"])
+    payload_signature = browser_key.sign(
+        canonical_json_bytes(prepared["advanced"]["canonical_payload"]),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+
+    result = submit_client_signature(prepared["request_id"], base64.b64encode(payload_signature).decode("ascii"))
+    assert result["status"] == "accepted"
+    assert any(check["key"] == "signerCertificateMatchesRequest" and check["ok"] for check in result["checks"])
+
+
 def test_remote_signing_requires_confirmed_intent_and_mfa():
     import pytest
     from app.services.pki_service import init_demo_pki

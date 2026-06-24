@@ -1,16 +1,49 @@
 # Python cache
 __pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+*.pyd
 .pytest_cache/
 pytest-cache-files*/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # Runtime/generated data
 data/
+*.sqlite
+*.sqlite3
+*.db
+*.log
 
 # Frontend build output
 frontend/dist/
+frontend/node_modules/
 node_modules/
 
 # Private keys / generated cert keys
 *.key
 *_key.pem
+*.p12
+*.pfx
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+!.env.sample
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+
+# Local virtualenv / editor files
+.venv/
+venv/
+env/
+.vscode/
+.idea/
+*.swp
+Thumbs.db

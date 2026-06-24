@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Dict, Tuple
 
 from cryptography import x509
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa, padding
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
@@ -143,7 +143,13 @@ def _build_user_cert(
 
 def init_demo_pki(force: bool = False) -> Dict:
     if not force and ROOT_KEY.exists() and ROOT_CERT.exists() and INT_KEY.exists() and INT_CERT.exists() and USER_KEY.exists() and USER_CERT.exists():
-        return describe_demo_pki()
+        try:
+            root_has_aki = _extension_value(_load_cert(ROOT_CERT), x509.AuthorityKeyIdentifier) is not None
+            inter_has_aki = _extension_value(_load_cert(INT_CERT), x509.AuthorityKeyIdentifier) is not None
+            if root_has_aki and inter_has_aki:
+                return describe_demo_pki()
+        except Exception:
+            pass
 
     root_key = _new_rsa_key()
     root_subject = _name("SecureDoc Demo Root CA")
@@ -232,121 +238,6 @@ def certificate_view_dict(cert: x509.Certificate, status_override: str | None = 
         "algorithm": "RSA-PSS-SHA256",
     }
 
-def _profile_check(checks: list[Dict], key: str, label: str, ok: bool, message: str):
-    checks.append({"key": key, "label": label, "ok": ok, "message": message})
-
-def _get_extension(cert: x509.Certificate, extension_class):
-    try:
-        return cert.extensions.get_extension_for_class(extension_class)
-    except x509.ExtensionNotFound:
-        return None
-
-def validate_document_signing_certificate_profile(cert: x509.Certificate) -> Dict:
-    checks: list[Dict] = []
-
-    basic_ext = _get_extension(cert, x509.BasicConstraints)
-    basic = basic_ext.value if basic_ext else None
-    _profile_check(
-        checks,
-        "basic_constraints_end_entity",
-        "BasicConstraints: end-entity certificate",
-        bool(basic_ext and basic.ca is False),
-        "Certificate is CA:FALSE." if basic_ext and basic.ca is False else "User signing certificate must be CA:FALSE.",
-    )
-
-    key_usage_ext = _get_extension(cert, x509.KeyUsage)
-    key_usage = key_usage_ext.value if key_usage_ext else None
-    key_usage_ok = bool(
-        key_usage_ext
-        and key_usage.digital_signature
-        and key_usage.content_commitment
-        and not key_usage.key_cert_sign
-        and not key_usage.crl_sign
-    )
-    _profile_check(
-        checks,
-        "key_usage_document_signing",
-        "KeyUsage: document signing",
-        key_usage_ok,
-        "digitalSignature + contentCommitment enabled; CA signing disabled."
-        if key_usage_ok
-        else "Document signing cert needs digitalSignature/contentCommitment and must not sign certificates.",
-    )
-
-    ski_ext = _get_extension(cert, x509.SubjectKeyIdentifier)
-    _profile_check(
-        checks,
-        "subject_key_identifier_present",
-        "SubjectKeyIdentifier present",
-        bool(ski_ext),
-        "SKI is present." if ski_ext else "SKI is missing.",
-    )
-
-    aki_ext = _get_extension(cert, x509.AuthorityKeyIdentifier)
-    _profile_check(
-        checks,
-        "authority_key_identifier_present",
-        "AuthorityKeyIdentifier present",
-        bool(aki_ext),
-        "AKI is present." if aki_ext else "AKI is missing.",
-    )
-
-    eku_ext = _get_extension(cert, x509.ExtendedKeyUsage)
-    _profile_check(
-        checks,
-        "eku_document_signing_semantics",
-        "EKU/document signing semantics",
-        True,
-        (
-            "No EKU extension is required in this demo; document-signing semantics are expressed by KeyUsage."
-            if not eku_ext
-            else "EKU is present; this demo still relies on KeyUsage for document-signing semantics."
-        ),
-    )
-
-    return {
-        "profile_id": "demo-document-signing-v1",
-        "valid": all(check["ok"] for check in checks),
-        "checks": checks,
-        "eku_policy": "Document/PDF signing uses KeyUsage digitalSignature + contentCommitment; CODE_SIGNING EKU is intentionally not used as legal-document semantics.",
-    }
-
-def validate_ca_certificate_profile(cert: x509.Certificate, expected_root: bool = False) -> Dict:
-    checks: list[Dict] = []
-
-    basic_ext = _get_extension(cert, x509.BasicConstraints)
-    basic = basic_ext.value if basic_ext else None
-    _profile_check(
-        checks,
-        "basic_constraints_ca",
-        "BasicConstraints: CA certificate",
-        bool(basic_ext and basic.ca is True),
-        "Certificate is CA:TRUE." if basic_ext and basic.ca else "CA certificate must be CA:TRUE.",
-    )
-
-    key_usage_ext = _get_extension(cert, x509.KeyUsage)
-    key_usage = key_usage_ext.value if key_usage_ext else None
-    ca_usage_ok = bool(key_usage_ext and key_usage.key_cert_sign and key_usage.crl_sign)
-    _profile_check(
-        checks,
-        "key_usage_ca",
-        "KeyUsage: CA signing",
-        ca_usage_ok,
-        "keyCertSign + cRLSign enabled." if ca_usage_ok else "CA certificate needs keyCertSign and cRLSign.",
-    )
-
-    ski_ext = _get_extension(cert, x509.SubjectKeyIdentifier)
-    _profile_check(checks, "subject_key_identifier_present", "SubjectKeyIdentifier present", bool(ski_ext), "SKI is present." if ski_ext else "SKI is missing.")
-
-    aki_ext = _get_extension(cert, x509.AuthorityKeyIdentifier)
-    _profile_check(checks, "authority_key_identifier_present", "AuthorityKeyIdentifier present", bool(aki_ext), "AKI is present." if aki_ext else "AKI is missing.")
-
-    return {
-        "profile_id": "demo-root-ca-v1" if expected_root else "demo-intermediate-ca-v1",
-        "valid": all(check["ok"] for check in checks),
-        "checks": checks,
-    }
-
 def get_root_certificate() -> x509.Certificate:
     init_demo_pki()
     return _load_cert(ROOT_CERT)
@@ -403,12 +294,120 @@ def get_user_private_key():
     init_demo_pki()
     return _load_key(USER_KEY)
 
-def get_chain() -> Tuple[x509.Certificate, x509.Certificate, x509.Certificate]:
-    init_demo_pki()
-    return get_user_certificate(), _load_cert(INT_CERT), _load_cert(ROOT_CERT)
+def _extension_value(cert: x509.Certificate, extension_type):
+    try:
+        return cert.extensions.get_extension_for_class(extension_type).value
+    except x509.ExtensionNotFound:
+        return None
 
-def verify_chain() -> Dict:
-    user, inter, root = get_chain()
+
+def _profile_result(checks: list[Dict]) -> Dict:
+    return {
+        "valid": all(check["ok"] for check in checks),
+        "checks": checks,
+    }
+
+
+def _profile_check(key: str, label: str, ok: bool, message: str) -> Dict:
+    return {"key": key, "label": label, "ok": ok, "message": message}
+
+
+def validate_document_signing_certificate_profile(cert: x509.Certificate) -> Dict:
+    basic_constraints = _extension_value(cert, x509.BasicConstraints)
+    key_usage = _extension_value(cert, x509.KeyUsage)
+    ski = _extension_value(cert, x509.SubjectKeyIdentifier)
+    aki = _extension_value(cert, x509.AuthorityKeyIdentifier)
+
+    checks = [
+        _profile_check(
+            "basic_constraints_end_entity",
+            "BasicConstraints CA:FALSE",
+            bool(basic_constraints and basic_constraints.ca is False),
+            "Document signing certificate must be an end-entity certificate.",
+        ),
+        _profile_check(
+            "key_usage_document_signing",
+            "KeyUsage permits document signing",
+            bool(
+                key_usage
+                and key_usage.digital_signature
+                and key_usage.content_commitment
+                and not key_usage.key_cert_sign
+            ),
+            "Document signing uses digitalSignature + contentCommitment and must not permit certificate signing.",
+        ),
+        _profile_check(
+            "subject_key_identifier_present",
+            "SubjectKeyIdentifier present",
+            ski is not None,
+            "SKI is required to trace the signer certificate.",
+        ),
+        _profile_check(
+            "authority_key_identifier_present",
+            "AuthorityKeyIdentifier present",
+            aki is not None,
+            "AKI is required to link the signer certificate to the issuing CA.",
+        ),
+        _profile_check(
+            "eku_document_signing_semantics",
+            "EKU/document signing semantics documented",
+            True,
+            "Demo profile uses KeyUsage for document signing semantics and intentionally omits a custom EKU.",
+        ),
+    ]
+    return _profile_result(checks)
+
+
+def validate_ca_certificate_profile(cert: x509.Certificate, expected_root: bool = False) -> Dict:
+    basic_constraints = _extension_value(cert, x509.BasicConstraints)
+    key_usage = _extension_value(cert, x509.KeyUsage)
+    ski = _extension_value(cert, x509.SubjectKeyIdentifier)
+    aki = _extension_value(cert, x509.AuthorityKeyIdentifier)
+
+    checks = [
+        _profile_check(
+            "basic_constraints_ca",
+            "BasicConstraints CA:TRUE",
+            bool(basic_constraints and basic_constraints.ca is True),
+            "CA certificate must be marked as CA.",
+        ),
+        _profile_check(
+            "key_usage_ca",
+            "KeyUsage permits CA operations",
+            bool(key_usage and key_usage.key_cert_sign and key_usage.crl_sign),
+            "CA certificate must permit certificate and CRL signing.",
+        ),
+        _profile_check(
+            "subject_key_identifier_present",
+            "SubjectKeyIdentifier present",
+            ski is not None,
+            "SKI is required for CA chain building.",
+        ),
+        _profile_check(
+            "authority_key_identifier_present",
+            "AuthorityKeyIdentifier present",
+            aki is not None,
+            "AKI is required for CA chain building, including demo self-issued root.",
+        ),
+    ]
+    if expected_root:
+        checks.append(
+            _profile_check(
+                "root_self_issued",
+                "Root certificate is self-issued",
+                cert.subject == cert.issuer,
+                "Demo root CA should be self-issued.",
+            )
+        )
+    return _profile_result(checks)
+
+
+def get_chain(user_cert: x509.Certificate | None = None) -> Tuple[x509.Certificate, x509.Certificate, x509.Certificate]:
+    init_demo_pki()
+    return user_cert or get_user_certificate(), _load_cert(INT_CERT), _load_cert(ROOT_CERT)
+
+def verify_chain(user_cert: x509.Certificate | None = None) -> Dict:
+    user, inter, root = get_chain(user_cert)
     now = datetime.now(timezone.utc)
     checks = []
 
@@ -422,9 +421,19 @@ def verify_chain() -> Dict:
             padding.PKCS1v15(),
             user.signature_hash_algorithm,
         )
-        add("user_cert_signed_by_intermediate", "User certificate signed by Intermediate CA", True, "User certificate signature is valid.")
+        add(
+            "user_cert_signed_by_intermediate",
+            "User certificate signed by Intermediate CA",
+            True,
+            "User certificate signature is valid.",
+        )
     except InvalidSignature:
-        add("user_cert_signed_by_intermediate", "User certificate signed by Intermediate CA", False, "Invalid user certificate signature.")
+        add(
+            "user_cert_signed_by_intermediate",
+            "User certificate signed by Intermediate CA",
+            False,
+            "Invalid user certificate signature.",
+        )
 
     try:
         root.public_key().verify(
@@ -433,15 +442,53 @@ def verify_chain() -> Dict:
             padding.PKCS1v15(),
             inter.signature_hash_algorithm,
         )
-        add("intermediate_signed_by_root", "Intermediate CA signed by Root CA", True, "Intermediate CA certificate signature is valid.")
+        add(
+            "intermediate_signed_by_root",
+            "Intermediate CA signed by Root CA",
+            True,
+            "Intermediate CA certificate signature is valid.",
+        )
     except InvalidSignature:
-        add("intermediate_signed_by_root", "Intermediate CA signed by Root CA", False, "Invalid intermediate certificate signature.")
+        add(
+            "intermediate_signed_by_root",
+            "Intermediate CA signed by Root CA",
+            False,
+            "Invalid intermediate certificate signature.",
+        )
 
-    add("user_cert_time_valid", "User certificate validity period", user.not_valid_before_utc <= now <= user.not_valid_after_utc, "User certificate is within validity period.")
-    add("intermediate_time_valid", "Intermediate certificate validity period", inter.not_valid_before_utc <= now <= inter.not_valid_after_utc, "Intermediate CA is within validity period.")
-    add("root_time_valid", "Root certificate validity period", root.not_valid_before_utc <= now <= root.not_valid_after_utc, "Root CA is within validity period.")
+    add(
+        "user_cert_time_valid",
+        "User certificate validity period",
+        user.not_valid_before_utc <= now <= user.not_valid_after_utc,
+        "User certificate is within validity period.",
+    )
+    add(
+        "intermediate_time_valid",
+        "Intermediate certificate validity period",
+        inter.not_valid_before_utc <= now <= inter.not_valid_after_utc,
+        "Intermediate CA is within validity period.",
+    )
+    add(
+        "root_time_valid",
+        "Root certificate validity period",
+        root.not_valid_before_utc <= now <= root.not_valid_after_utc,
+        "Root CA is within validity period.",
+    )
+
+    user_profile = validate_document_signing_certificate_profile(user)
+    intermediate_profile = validate_ca_certificate_profile(inter)
+    root_profile = validate_ca_certificate_profile(root, expected_root=True)
+
+    checks.extend(user_profile["checks"])
+    checks.extend(intermediate_profile["checks"])
+    checks.extend(root_profile["checks"])
 
     return {
         "trusted_chain_valid": all(c["ok"] for c in checks),
         "checks": checks,
+        "profiles": {
+            "user": user_profile,
+            "intermediate": intermediate_profile,
+            "root": root_profile,
+        },
     }

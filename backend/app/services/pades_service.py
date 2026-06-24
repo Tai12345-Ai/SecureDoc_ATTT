@@ -151,12 +151,15 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
         "coverage": str(status.coverage),
         "modification_level": str(status.modification_level),
         "signer_subject": signer_cert.subject.human_friendly if signer_cert else None,
-    }
+        "signer_issuer": signer_cert.issuer.human_friendly if signer_cert else None,
+        "signer_serial": str(signer_cert.serial_number) if signer_cert else None,
+        "digest_algorithm": "SHA-256",
+        "signature_algorithm": "RSA-PSS-SHA256",
+   }
     return _report(all(c["ok"] for c in checks), checks, advanced)
 
 
 def _report(accepted: bool, checks: list[Dict], advanced: Dict) -> Dict:
-    advanced.setdefault("pades_profile", "PAdES-B-B")
     return {
         "status": "accepted" if accepted else "rejected",
         "accepted": accepted,
