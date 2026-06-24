@@ -1,0 +1,16 @@
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+pytest-cache-files*/
+
+# Runtime/generated data
+data/
+
+# Frontend build output
+frontend/dist/
+node_modules/
+
+# Private keys / generated cert keys
+*.key
+*_key.pem
