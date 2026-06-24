@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
+from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.exceptions import InvalidSignature
@@ -336,8 +337,9 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
 
     payload = package["payload"]
     payload_bytes = canonical_json_bytes(payload)
-    cert = get_user_certificate()
+    cert = x509.load_pem_x509_certificate(package["signerCertificatePem"].encode("utf-8"))
     public_key = cert.public_key()
+    signer_cert_serial = str(cert.serial_number)
 
     try:
         public_key.verify(
@@ -365,14 +367,21 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
         "requestId, certificateSerial và nonce khớp signing request.",
     )
 
-    chain = verify_chain()
+    add(
+        "signerCertificateMatchesRequest",
+        "Signer certificate matches request",
+        signer_cert_serial == record["certificate_serial"] == payload.get("certificateSerial"),
+        "Signer certificate serial matches the signed payload and signing request.",
+    )
+
+    chain = verify_chain(cert)
     for chain_check in chain["checks"]:
         add(chain_check["key"], chain_check["label"], chain_check["ok"], chain_check["message"])
 
     ts = verify_demo_timestamp(package["timestamp"], payload.get("documentHash"))
     add("timestampValid", "Timestamp hợp lệ", ts["ok"], ts["message"])
 
-    if ts.get("trusted") and ts.get("genTime"):
+    if ts.get("ok") and ts.get("genTime"):
         rev = revocation_status_at(record["certificate_serial"], ts["genTime"])
         revocation_ok = not rev["revoked_at_time"]
         revocation_message = (
