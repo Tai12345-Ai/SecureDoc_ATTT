@@ -114,7 +114,7 @@ http://127.0.0.1:8000/docs
 Mở terminal khác:
 
 ```bash
-cd securedoc_full_demo_v4/frontend
+cd frontend
 npm install
 npm run dev
 ```

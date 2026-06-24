@@ -1,6 +1,7 @@
 import secrets
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import settings
 from app.services.pades_service import is_pdf_bytes, verify_pdf_signature
@@ -19,10 +20,11 @@ async def verify_uploaded_pdf(file: UploadFile = File(...)):
 
     verify_id = "verify_" + secrets.token_hex(12)
     temp_path = settings.signed_documents_dir / f"{verify_id}.pdf"
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path.write_bytes(data)
 
     try:
-        return verify_pdf_signature(temp_path)
+        return await run_in_threadpool(verify_pdf_signature, temp_path)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
