@@ -81,6 +81,10 @@ button:disabled {
   margin-bottom: 22px;
 }
 
+.section-title.compact {
+  margin-bottom: 14px;
+}
+
 .section-title h2 {
   margin: 0 0 8px 0;
 }
@@ -92,6 +96,23 @@ button:disabled {
   color: #3730a3;
   font-weight: 700;
   white-space: nowrap;
+}
+
+.status-pill {
+  padding: 10px 14px;
+  border-radius: 999px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status-pill.ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.status-pill.bad {
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .user-grid {
@@ -272,9 +293,34 @@ textarea {
   margin-top: 16px;
 }
 
-.advanced summary {
+.advanced summary, .advanced-demo summary {
   cursor: pointer;
   font-weight: 700;
+}
+
+.advanced-demo {
+  margin-top: 8px;
+}
+
+.history-list {
+  display: grid;
+  gap: 12px;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  padding: 14px;
+}
+
+.history-item p {
+  margin: 6px 0;
+  color: #4b5563;
 }
 
 pre {
@@ -393,6 +439,10 @@ code {
   }
   .progress, .checks, .summary-grid, .artifact-overview {
     grid-template-columns: 1fr;
+  }
+  .history-item {
+    align-items: stretch;
+    flex-direction: column;
   }
   .thinking-panel {
     position: static;

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { getUserWorkspace, prepareSigningRequest, confirmSigningIntent, signAndVerify, signPdf, verifyPdf } from "../api/client";
+import { getUserWorkspace, prepareSigningRequest, confirmSigningIntent, signAndVerify, signPdf, verifyPdf, getSigningHistory } from "../api/client";
 import { CheckCard } from "../components/CheckCard";
 import { AdvancedDetails } from "../components/AdvancedDetails";
 import { DownloadSignedPdfButton } from "../components/DownloadSignedPdfButton";
@@ -15,14 +15,25 @@ export function UserSigningPage() {
   const [pdfResult, setPdfResult] = useState<any>(null);
   const [verifyFile, setVerifyFile] = useState<File | null>(null);
   const [verifyReport, setVerifyReport] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     getUserWorkspace().then(setWorkspace).catch(e => setError(String(e)));
+    refreshHistory();
   }, []);
 
   const cert = workspace?.certificate;
+
+  async function refreshHistory() {
+    try {
+      const data = await getSigningHistory();
+      setHistory(data.items || []);
+    } catch {
+      setHistory([]);
+    }
+  }
 
   async function doPrepare() {
     if (!file || !cert) {
@@ -80,6 +91,7 @@ export function UserSigningPage() {
     setBusy("sign-pdf");
     try {
       setPdfResult(await signPdf(prepared.request_id));
+      await refreshHistory();
     } catch (e: any) {
       setError(e.message || String(e));
     } finally {
@@ -149,8 +161,12 @@ export function UserSigningPage() {
               <button onClick={doPrepare} disabled={!file || !!busy}>{busy === "prepare" ? "Đang tạo..." : "Tạo yêu cầu ký"}</button>
               <button onClick={doConfirm} disabled={!prepared || !!busy}>{busy === "confirm" ? "Đang xác nhận..." : "Xác nhận OTP/TOTP"}</button>
               <button className="primary" onClick={doSignPdf} disabled={!confirmed || !!busy}>{busy === "sign-pdf" ? "Đang ký PDF..." : "Ký PDF/PAdES"}</button>
-              <button onClick={doSign} disabled={!confirmed || !!busy}>{busy === "sign" ? "Đang ký..." : "Ký payload demo"}</button>
             </div>
+            <details className="advanced-demo">
+              <summary>Advanced demo: ký canonical payload</summary>
+              <p className="hint">Flow chính của User Mode là ký PDF/PAdES. Nút này chỉ phục vụ thuyết trình cơ chế hash, nonce và canonical JSON.</p>
+              <button onClick={doSign} disabled={!confirmed || !!busy}>{busy === "sign" ? "Đang ký..." : "Ký payload demo"}</button>
+            </details>
           </div>
 
           {prepared && (
@@ -217,6 +233,25 @@ export function UserSigningPage() {
               <button onClick={doVerifyPdf} disabled={!verifyFile || !!busy}>{busy === "verify-pdf" ? "Đang verify..." : "Verify PDF"}</button>
             </div>
             {verifyReport && <VerificationSummary report={verifyReport} title="Uploaded PDF verification" />}
+          </div>
+
+          <div className="summary-card">
+            <h3>Signing history</h3>
+            <p className="hint">Phase 1/2 demo: lịch sử ký hiện lưu trong memory của backend. Restart backend sẽ mất history; Phase 6 mới DB hóa.</p>
+            {history.length > 0 ? (
+              <div className="history-list">
+                {history.map(item => (
+                  <div className="history-item" key={item.file_id}>
+                    <div>
+                      <strong>{item.original_filename}</strong>
+                      <p>{item.pades_profile} · {new Date(item.created_at).toLocaleString()}</p>
+                      <code>{item.file_id}</code>
+                    </div>
+                    <DownloadSignedPdfButton fileId={item.file_id} />
+                  </div>
+                ))}
+              </div>
+            ) : <p className="hint">Chưa có signed PDF nào trong phiên backend hiện tại.</p>}
           </div>
         </div>
       </div>
