@@ -1,0 +1,74 @@
+[
+  {
+    "serial": "424280169364684925765454689550655795125825226338",
+    "revoked_at": "2026-06-24T05:10:33.911363+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "649683888513592528087167754555649539782645343228",
+    "revoked_at": "2026-06-24T05:10:37.228465+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "53480024339188051409787226081014291929384739989",
+    "revoked_at": "2026-06-24T05:10:38.414990+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "265353888164478668392543754439807769723981738372",
+    "revoked_at": "2026-06-24T05:11:34.034586+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "562404606422902501523359827298155088673086752854",
+    "revoked_at": "2026-06-24T05:11:37.037040+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "609352653193577671091924761538827947689222126472",
+    "revoked_at": "2026-06-24T05:11:37.768833+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "671715715578330173964850297941984484914665090845",
+    "revoked_at": "2026-06-24T06:05:05.790108+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "374540915514783708800066327166398459444905885050",
+    "revoked_at": "2026-06-24T06:05:13.081472+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "297183467589513722682616108240820462325361299788",
+    "revoked_at": "2026-06-24T06:05:14.417844+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "596208169117420613342852221126944783726252454790",
+    "revoked_at": "2026-06-24T06:47:59.832424+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "675470734829258967909099215207476247916723635783",
+    "revoked_at": "2026-06-24T06:48:16.314199+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  },
+  {
+    "serial": "522388562873163593114734634308417757248145587002",
+    "revoked_at": "2026-06-24T06:48:22.619089+00:00",
+    "reason": "cessationOfOperation",
+    "source": "DEMO_LOCAL_REVOCATION_REGISTRY"
+  }
+]

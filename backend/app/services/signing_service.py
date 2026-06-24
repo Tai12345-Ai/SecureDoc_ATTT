@@ -29,7 +29,7 @@ from cryptography.exceptions import InvalidSignature
 from app.core.config import settings
 from app.services.crypto_utils import sha256_bytes, canonical_json_bytes, b64e, b64d
 from app.services.pki_service import get_user_certificate, get_user_private_key, verify_chain
-from app.services.revocation_service import status as revocation_status
+from app.services.revocation_service import status as revocation_status, status_at as revocation_status_at
 from app.services.timestamp_service import issue_demo_timestamp, verify_demo_timestamp
 from app.services.audit_service import append_event
 from app.services.certificate_lifecycle_service import get_certificate_status
@@ -191,6 +191,48 @@ def sign_and_verify(request_id: str) -> Dict:
     )
     return report
 
+def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
+    record = _REQUESTS.get(request_id)
+    if not record:
+        raise ValueError("Unknown signing request")
+    if not record["confirmed"]:
+        raise ValueError("Signing intent has not been confirmed")
+    _assert_certificate_usable(record["certificate_serial"])
+
+    cert = get_user_certificate()
+    payload_bytes = canonical_json_bytes(record["payload"])
+    try:
+        cert.public_key().verify(
+            b64d(signature_base64),
+            payload_bytes,
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256(),
+        )
+    except InvalidSignature as exc:
+        raise ValueError("Client signature does not verify against active certificate") from exc
+
+    timestamp = issue_demo_timestamp(record["document_hash"])
+    signed_package = {
+        "packageType": "SECUREDOC_CLIENT_SIGNED_PACKAGE_V1",
+        "payload": record["payload"],
+        "signatureAlgorithm": "RSA-PSS-SHA256",
+        "signatureBase64": signature_base64,
+        "signerCertificatePem": cert.public_bytes(serialization.Encoding.PEM).decode("utf-8"),
+        "timestamp": timestamp,
+        "keyCustody": "BROWSER_LOCAL_SIGNING",
+    }
+    _SIGNED_PACKAGES[request_id] = signed_package
+    record["signed"] = True
+    report = verify_signed_package(request_id, signed_package)
+    append_event(
+        actor="alice@example.com",
+        action="submit_client_signature",
+        target=request_id,
+        status="ok" if report["accepted"] else "rejected",
+        metadata={"keyCustody": "BROWSER_LOCAL_SIGNING"},
+    )
+    return report
+
 def sign_pdf_request(request_id: str) -> Dict:
     record = _REQUESTS.get(request_id)
     if not record:
@@ -305,22 +347,40 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     for chain_check in chain["checks"]:
         add(chain_check["key"], chain_check["label"], chain_check["ok"], chain_check["message"])
 
-    rev = revocation_status(record["certificate_serial"])
-    add(
-        "revocationValid",
-        "Chứng thư chưa bị thu hồi",
-        not rev["revoked"],
-        "Demo revocation status = good." if not rev["revoked"] else "Certificate has been revoked.",
-    )
-
     ts = verify_demo_timestamp(package["timestamp"], payload.get("documentHash"))
     add("timestampValid", "Timestamp hợp lệ", ts["ok"], ts["message"])
+
+    if ts.get("trusted") and ts.get("genTime"):
+        rev = revocation_status_at(record["certificate_serial"], ts["genTime"])
+        revocation_ok = not rev["revoked_at_time"]
+        revocation_message = (
+            "Certificate was good at trusted signing time."
+            if revocation_ok
+            else "Certificate had already been revoked at trusted signing time."
+        )
+        revocation_checked_at = "signing_time"
+    else:
+        rev = revocation_status(record["certificate_serial"])
+        revocation_ok = not rev["revoked"]
+        revocation_message = (
+            "Certificate is good at verification time, but signing time is not trusted."
+            if revocation_ok
+            else "Certificate is revoked at verification time and no trusted timestamp proves earlier signing."
+        )
+        revocation_checked_at = "verify_time"
+
+    add(
+        "revocationValid",
+        "Trạng thái thu hồi chứng thư hợp lệ",
+        revocation_ok,
+        revocation_message,
+    )
 
     accepted = all(c["ok"] for c in checks)
     warnings = [
         "Demo mode: chưa dùng public trusted CA.",
         "Demo mode: chưa dùng HSM/KMS.",
-        "Demo mode: timestamp là JSON mô phỏng, chưa phải RFC3161 TSA.",
+        "Demo mode: timestamp là signed demo TSA token, chưa phải RFC3161 TSA.",
         "Demo mode: revocation là local list, chưa phải OCSP/CRL.",
     ]
 
@@ -335,6 +395,11 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
         "accepted": accepted,
         "advanced": {
             "signed_package": package,
+            "timestamp_validation": ts,
+            "revocation_validation": {
+                **rev,
+                "checked_at_policy": revocation_checked_at,
+            },
             "verification_model": "DSS-style validation report simplified for educational demo.",
         },
     }

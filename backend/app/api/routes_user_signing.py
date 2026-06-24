@@ -9,6 +9,7 @@ from app.services.signing_service import (
     sign_and_verify,
     sign_pdf_request,
     get_signed_pdf_record,
+    submit_client_signature,
 )
 from app.services.certificate_lifecycle_service import get_my_active_certificate, sync_demo_certificate_record
 
@@ -30,6 +31,7 @@ def get_workspace():
             "confirm_signing_intent",
             "sign_and_verify",
             "sign_pdf",
+            "submit_client_signature",
             "download_signed_pdf",
         ],
     }
@@ -71,6 +73,13 @@ def sign_verify(request_id: str):
 def sign_pdf(request_id: str):
     try:
         return sign_pdf_request(request_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@router.post("/submit-client-signature")
+def submit_signature(request_id: str, signature_base64: str):
+    try:
+        return submit_client_signature(request_id, signature_base64)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

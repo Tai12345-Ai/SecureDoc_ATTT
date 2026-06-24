@@ -12,6 +12,9 @@ class Settings(BaseModel):
     signed_packages_dir: Path = DATA_DIR / "signed_packages"
     signed_documents_dir: Path = DATA_DIR / "signed_documents"
     certificates_dir: Path = DATA_DIR / "certificates"
+    demo_tsa_dir: Path = DATA_DIR / "demo_tsa"
+    key_enrollment_dir: Path = DATA_DIR / "key_enrollment"
+    revocation_file: Path = DATA_DIR / "revocations.json"
     audit_file: Path = DATA_DIR / "audit_events.jsonl"
 
 settings = Settings()
@@ -23,5 +26,7 @@ for directory in [
     settings.signed_packages_dir,
     settings.signed_documents_dir,
     settings.certificates_dir,
+    settings.demo_tsa_dir,
+    settings.key_enrollment_dir,
 ]:
     directory.mkdir(parents=True, exist_ok=True)

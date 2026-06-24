@@ -7,6 +7,10 @@ from app.api.routes_certificates import router as certificate_router
 from app.api.routes_blind_signature import router as blind_router
 from app.api.routes_audit import router as audit_router
 from app.api.routes_verification import router as verification_router
+from app.api.routes_timestamp import router as timestamp_router
+from app.api.routes_revocation import router as revocation_router
+from app.api.routes_key_enrollment import router as key_enrollment_router
+from app.api.routes_remote_signing import router as remote_signing_router
 
 app = FastAPI(
     title="SecureDoc Full Demo v4",
@@ -28,11 +32,21 @@ app.include_router(certificate_router, prefix="/api/certificates", tags=["Certif
 app.include_router(blind_router, prefix="/api/blind-signature", tags=["Blind Signature"])
 app.include_router(audit_router, prefix="/api/audit", tags=["Audit"])
 app.include_router(verification_router, prefix="/api/verification", tags=["Verification"])
+app.include_router(timestamp_router, prefix="/api/timestamp", tags=["Timestamp"])
+app.include_router(revocation_router, prefix="/api/revocation", tags=["Revocation"])
+app.include_router(key_enrollment_router, prefix="/api/key-enrollment", tags=["Key Enrollment"])
+app.include_router(remote_signing_router, prefix="/api/remote-signing", tags=["Remote Signing"])
 
 @app.get("/api/health")
 def health():
     return {
         "status": "ok",
         "service": "SecureDoc Full Demo v4",
-        "modes": ["pipeline", "user-signing", "blind-signature"],
+        "modes": [
+            "pipeline",
+            "user-signing",
+            "certificate-lifecycle",
+            "security-services",
+            "blind-signature",
+        ],
     }
