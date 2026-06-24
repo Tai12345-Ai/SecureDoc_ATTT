@@ -16,16 +16,16 @@ function App() {
     <main className="app">
       <header className="hero">
         <div>
-          <h1>SecureDoc Full Demo v4</h1>
-          <p>End-to-end digital signature web demo: PKI, X.509, signing protocol, services, blind signature, application.</p>
+          <h1>SecureDoc ATTT — Digital Signature Demo</h1>
+          <p>Educational prototype mô phỏng hệ thống chữ ký số end-to-end: CA/PKI, X.509, PDF/PAdES, verification, trust services, remote signing và chữ ký mù.</p>
         </div>
       </header>
 
       <nav className="tabs">
         <button className={mode === "user" ? "active" : ""} onClick={() => setMode("user")}>User Signing</button>
-        <button className={mode === "certificates" ? "active" : ""} onClick={() => setMode("certificates")}>Certificate Lifecycle</button>
-        <button className={mode === "security" ? "active" : ""} onClick={() => setMode("security")}>Security Services</button>
-        <button className={mode === "pipeline" ? "active" : ""} onClick={() => setMode("pipeline")}>Pipeline / ATTT Demo</button>
+        <button className={mode === "certificates" ? "active" : ""} onClick={() => setMode("certificates")}>CA / Certificate Lifecycle</button>
+        <button className={mode === "security" ? "active" : ""} onClick={() => setMode("security")}>Trust & Key Services</button>
+        <button className={mode === "pipeline" ? "active" : ""} onClick={() => setMode("pipeline")}>End-to-End Pipeline</button>
         <button className={mode === "blind" ? "active" : ""} onClick={() => setMode("blind")}>Blind Signature</button>
       </nav>
 
