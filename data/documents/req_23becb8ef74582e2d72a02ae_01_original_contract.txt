@@ -1,0 +1,12 @@
+SECUREDOC TEST CONTRACT
+Document ID: SD-TEST-001
+Version: 1.0
+Signer: Nguyen Van A
+Purpose: sign_contract
+
+Content:
+This is the ORIGINAL document for testing SecureDoc digital signature.
+If this file is signed successfully, verification with exactly this file should PASS.
+
+Amount: 10,000,000 VND
+Date: 2026-06-16

@@ -1,0 +1,121 @@
+import React, { useEffect, useState } from "react";
+import {
+  enrollDemoBackendKey,
+  getCertificateChain,
+  getCertificateStatus,
+  getMyActiveCertificate,
+  revokeCertificate,
+} from "../api/client";
+import { AdvancedDetails } from "../components/AdvancedDetails";
+
+export function CertificateLifecyclePage() {
+  const [active, setActive] = useState<any>(null);
+  const [status, setStatus] = useState<any>(null);
+  const [chain, setChain] = useState<any>(null);
+  const [lastAction, setLastAction] = useState<any>(null);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  async function refresh(serial?: string) {
+    const cert = serial ? active : await getMyActiveCertificate();
+    const activeCert = serial ? { ...active, serial } : cert;
+    setActive(activeCert);
+    if (activeCert?.serial) {
+      setStatus(await getCertificateStatus(activeCert.serial));
+      setChain(await getCertificateChain(activeCert.serial));
+    }
+  }
+
+  useEffect(() => {
+    refresh().catch(e => setError(e.message || String(e)));
+  }, []);
+
+  async function issueDemo() {
+    setError("");
+    setBusy("issue");
+    try {
+      const issued = await enrollDemoBackendKey();
+      setLastAction(issued);
+      await refresh(issued.serial);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function revokeActive() {
+    if (!active?.serial) return;
+    setError("");
+    setBusy("revoke");
+    try {
+      const revoked = await revokeCertificate(active.serial);
+      setLastAction(revoked);
+      setStatus(revoked);
+    } catch (e: any) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <section className="card">
+      <div className="section-title">
+        <div>
+          <h2>Certificate Lifecycle</h2>
+          <p>Demo Phase 2: enrollment, issue, active certificate, chain, status và revoke.</p>
+        </div>
+        <div className="mode-pill">EJBCA-style demo</div>
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      <div className="actions">
+        <button className="primary" onClick={issueDemo} disabled={!!busy}>{busy === "issue" ? "Đang issue..." : "Enroll + Issue demo cert"}</button>
+        <button onClick={revokeActive} disabled={!active || !!busy}>{busy === "revoke" ? "Đang revoke..." : "Revoke active cert"}</button>
+      </div>
+
+      <div className="summary-card">
+        <h3>My active certificate</h3>
+        {active ? (
+          <div className="summary-grid">
+            <p><span>Serial</span><strong>{active.serial}</strong></p>
+            <p><span>Subject</span><strong>{active.subject}</strong></p>
+            <p><span>Issuer</span><strong>{active.issuer}</strong></p>
+            <p><span>Status</span><strong className={active.status === "active" ? "green" : ""}>{status?.lifecycle_status || active.status}</strong></p>
+          </div>
+        ) : <p>Đang tải certificate...</p>}
+      </div>
+
+      {status && (
+        <div className="summary-card">
+          <h3>Certificate status</h3>
+          <div className="summary-grid">
+            <p><span>Lifecycle</span><strong>{status.lifecycle_status}</strong></p>
+            <p><span>Revocation</span><strong>{status.revocation_status}</strong></p>
+            <p><span>Profile</span><strong>{status.profile_id}</strong></p>
+            <p><span>Key source</span><strong>{status.key_source}</strong></p>
+          </div>
+          <p className="hint">{status.warning}</p>
+        </div>
+      )}
+
+      {chain && (
+        <div className="summary-card">
+          <h3>Certificate chain</h3>
+          <div className="artifact-overview">
+            {chain.chain.map((cert: any, index: number) => (
+              <div key={`${cert.serial}-${index}`}>
+                <strong>{index === 0 ? "User cert" : index === 1 ? "Intermediate CA" : "Root CA"}</strong>
+                <p>{cert.subject}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {lastAction && <AdvancedDetails data={lastAction} />}
+    </section>
+  );
+}
