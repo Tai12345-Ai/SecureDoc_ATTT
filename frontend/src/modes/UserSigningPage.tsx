@@ -237,6 +237,7 @@ export function UserSigningPage() {
 
           <div className="summary-card">
             <h3>Signing history</h3>
+            <p className="hint">Phase 1/2 demo: lịch sử ký hiện lưu trong memory của backend. Restart backend sẽ mất history; Phase 6 mới DB hóa.</p>
             {history.length > 0 ? (
               <div className="history-list">
                 {history.map(item => (
