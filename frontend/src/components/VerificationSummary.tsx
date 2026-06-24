@@ -30,9 +30,12 @@ export function VerificationSummary({ report, title = "PDF verification report" 
         <p><span>Profile</span><strong>{details.pades_profile || "PAdES-B-B demo"}</strong></p>
         <p><span>Checks passed</span><strong>{passed}/{total}</strong></p>
         <p><span>Người ký</span><strong>{details.signer_subject || "Không xác định"}</strong></p>
+        <p><span>Serial chứng thư</span><strong>{details.signer_serial || "Không xác định"}</strong></p>
+        <p><span>Issuer</span><strong>{details.signer_issuer || "Không xác định"}</strong></p>
         <p><span>Signature field</span><strong>{details.signature_field || "Không có"}</strong></p>
         <p><span>Số chữ ký</span><strong>{details.signature_count ?? 0}</strong></p>
         <p><span>Coverage</span><strong>{details.coverage || "Không xác định"}</strong></p>
+        <p><span>Digest</span><strong>{details.digest_algorithm || "SHA-256"}</strong></p>
       </div>
 
       <div className="checks">
