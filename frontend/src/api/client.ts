@@ -58,6 +58,10 @@ export function signedPdfUrl(fileId: string) {
   return `${API_BASE}/user-signing/signed-files/${encodeURIComponent(fileId)}`;
 }
 
+export function getSigningHistory() {
+  return jfetch(`${API_BASE}/user-signing/history`);
+}
+
 export function verifyPdf(file: File) {
   const body = new FormData();
   body.append("file", file);

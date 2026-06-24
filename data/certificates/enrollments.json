@@ -39,16 +39,68 @@
     "certificate_serial": "292487729821138437015527076944306469297225448911"
   },
   {
+    "enrollment_id": "enr_0ee574f544c33464cef18ea9",
+    "display_name": "Alice Demo Signer",
+    "email": "alice@example.com",
+    "public_key_path": "D:\\projects\\securedoc_full_demo_v4\\data\\certificates\\public_key_enr_0ee574f544c33464cef18ea9.pem",
+    "public_key_fingerprint_sha256": "cf099f1be2453178005fe3cb5007507f3cca467463eb965489b50cc4e27fa12f",
+    "proof_challenge": "securedoc-pop-v1:alice@example.com:cf099f1be2453178005fe3cb5007507f3cca467463eb965489b50cc4e27fa12f",
+    "proof_verified": true,
+    "status": "issued",
+    "created_at": "2026-06-24T03:24:57.137878+00:00",
+    "decided_at": "2026-06-24T03:24:57.274594+00:00",
+    "certificate_serial": "611122116848998968333005451674865447060166240475"
+  },
+  {
+    "enrollment_id": "enr_df5913a5c7981edad86ea10b",
+    "display_name": "Alice Demo Signer",
+    "email": "alice@example.com",
+    "public_key_path": "D:\\projects\\securedoc_full_demo_v4\\data\\certificates\\public_key_enr_df5913a5c7981edad86ea10b.pem",
+    "public_key_fingerprint_sha256": "32b879ba5725744c619b3b068e4652f9b3c0671e068e4bd9e357bebffb5aa0ca",
+    "proof_challenge": "securedoc-pop-v1:alice@example.com:32b879ba5725744c619b3b068e4652f9b3c0671e068e4bd9e357bebffb5aa0ca",
+    "proof_verified": true,
+    "status": "issued",
+    "created_at": "2026-06-24T03:42:56.067706+00:00",
+    "decided_at": "2026-06-24T03:42:56.211750+00:00",
+    "certificate_serial": "288947387068096180343972576233527845112227354173"
+  },
+  {
+    "enrollment_id": "enr_28928eb3094afbb4d186823b",
+    "display_name": "Alice Demo Signer",
+    "email": "alice@example.com",
+    "public_key_path": "D:\\projects\\securedoc_full_demo_v4\\data\\certificates\\public_key_enr_28928eb3094afbb4d186823b.pem",
+    "public_key_fingerprint_sha256": "be9240f851e732a1e6f91ab12254ea6cee5b48fd0275ec16f694c57c4e483867",
+    "proof_challenge": "securedoc-pop-v1:alice@example.com:be9240f851e732a1e6f91ab12254ea6cee5b48fd0275ec16f694c57c4e483867",
+    "proof_verified": true,
+    "status": "issued",
+    "created_at": "2026-06-24T03:46:48.734325+00:00",
+    "decided_at": "2026-06-24T03:46:48.896634+00:00",
+    "certificate_serial": "391587603852942395591838640220253408087112001395"
+  },
+  {
+    "enrollment_id": "enr_b9c432e082ba0ac61f44e45f",
+    "display_name": "Alice Demo Signer",
+    "email": "alice@example.com",
+    "public_key_path": "D:\\projects\\securedoc_full_demo_v4\\data\\certificates\\public_key_enr_b9c432e082ba0ac61f44e45f.pem",
+    "public_key_fingerprint_sha256": "291095683411ed49a5235b36de99b95d69de3e9eb9deafd7e2b884087d67f142",
+    "proof_challenge": "securedoc-pop-v1:alice@example.com:291095683411ed49a5235b36de99b95d69de3e9eb9deafd7e2b884087d67f142",
+    "proof_verified": true,
+    "status": "issued",
+    "created_at": "2026-06-24T03:47:46.231039+00:00",
+    "decided_at": "2026-06-24T03:47:46.501038+00:00",
+    "certificate_serial": "393944612986347751548114621332207265855903325583"
+  },
+  {
     "enrollment_id": "demo_alice_bootstrap",
     "display_name": "Alice Demo Signer",
     "email": "alice@example.com",
     "public_key_path": "D:\\projects\\securedoc_full_demo_v4\\data\\certificates\\public_key_demo_alice_bootstrap.pem",
-    "public_key_fingerprint_sha256": "59ab101658e6ee101736fa2e50f539a51bdaf203a1b6d40f93f7d9806f14173a",
+    "public_key_fingerprint_sha256": "65a97b5f907d8257211e015644d06aa83e90ec7542ec8910bb7aeeea864eedab",
     "proof_challenge": "DEMO_BOOTSTRAP",
     "proof_verified": true,
     "status": "issued",
-    "created_at": "2026-06-24T03:20:11.566524+00:00",
-    "decided_at": "2026-06-24T03:20:11.566547+00:00",
-    "certificate_serial": "625499687972079996921234604676561523285364381860"
+    "created_at": "2026-06-24T03:47:51.652849+00:00",
+    "decided_at": "2026-06-24T03:47:51.652867+00:00",
+    "certificate_serial": "167882503420853810669826007668668649031289398101"
   }
 ]
