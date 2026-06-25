@@ -3,8 +3,8 @@ PAdES service backed by pyHanko.
 
 The user-facing target is PAdES-B-LT. Lower PAdES levels are implementation
 steps, not independent user choices. The report is intentionally conservative:
-it only claims PAdES-B-LT when timestamp and validation evidence are actually
-embedded in the signed PDF.
+it only claims PAdES-B-LT when a valid signature timestamp and embedded
+validation evidence are present in the signed PDF.
 """
 
 from pathlib import Path
@@ -141,7 +141,8 @@ def add_rfc3161_timestamp(digest_algorithm: str | None = None) -> tuple[DummyTim
         return timestamper, {
             "state": "available",
             "standard": TIMESTAMP_STANDARD,
-            "source": "pyHanko DummyTimeStamper backed by a dedicated demo TSA certificate",
+            "source": "demo RFC3161 timestamp token created by pyHanko DummyTimeStamper with a dedicated demo TSA certificate",
+            "production_tsa": False,
         }
     except Exception as exc:
         return None, {
@@ -184,16 +185,18 @@ def _inspect_dss(pdf_path: str | Path) -> Dict:
         with Path(pdf_path).open("rb") as f:
             reader = PdfFileReader(f)
             root = reader.root
-            dss_ref = root.raw_get("/DSS", None) if hasattr(root, "raw_get") else root.get("/DSS")
+            try:
+                dss_ref = root.raw_get("/DSS")
+            except Exception:
+                dss_ref = root.get("/DSS") if hasattr(root, "get") else None
             if dss_ref is None:
                 return result
             result["dss_present"] = True
-            from pyhanko.pdf_utils import generic
             dss = dss_ref.get_object() if hasattr(dss_ref, "get_object") else dss_ref
             if hasattr(dss, "raw_get"):
-                certs = dss.raw_get("/Certs", None)
-                crls = dss.raw_get("/CRLs", None)
-                ocsps = dss.raw_get("/OCSPs", None)
+                certs = dss.raw_get("/Certs") if "/Certs" in dss else None
+                crls = dss.raw_get("/CRLs") if "/CRLs" in dss else None
+                ocsps = dss.raw_get("/OCSPs") if "/OCSPs" in dss else None
             else:
                 certs = dss.get("/Certs")
                 crls = dss.get("/CRLs")
@@ -230,11 +233,49 @@ def embed_ltv_info(pdf_path: str | Path, requested: bool) -> Dict:
     }
 
 
+def _requirement_missing(report: Dict) -> list[str]:
+    """Compute PAdES-B-LT gaps from observed facts, not from prior conclusions."""
+    missing: list[str] = []
+    if not report.get("has_embedded_signature"):
+        missing.append("embedded PDF signature")
+    if not report.get("signature_crypto_valid"):
+        missing.append("valid PDF cryptographic signature")
+    if not report.get("chain_valid_against_demo_root"):
+        missing.append("valid certificate chain")
+    if not report.get("timestamp_valid"):
+        missing.append("valid RFC3161 signature timestamp")
+    if not report.get("has_dss"):
+        missing.append("PDF DSS")
+    if not report.get("has_embedded_cert_chain"):
+        missing.append("embedded certificate chain")
+    if not report.get("has_embedded_crl_or_ocsp"):
+        missing.append("embedded CRL/OCSP revocation evidence")
+    if not report.get("revocation_evidence_valid"):
+        missing.append("valid revocation evidence")
+    if report.get("signing_cert_good_at_signing_time") is False:
+        missing.append("signer certificate good at signing time")
+    return missing
+
+
+def _profile_from_requirement_report(report: Dict, missing: list[str]) -> str:
+    if not missing:
+        return "PAdES-B-LT"
+    if (
+        report.get("has_embedded_signature")
+        and report.get("signature_crypto_valid")
+        and report.get("chain_valid_against_demo_root")
+        and report.get("timestamp_valid")
+    ):
+        return "PAdES-B-T"
+    return "PAdES-B-B"
+
+
 def validate_pades_blt_requirements(pdf_path: str | Path) -> Dict:
-    """Return a structured B-LT validation report for the given signed PDF."""
+    """Return an independently recomputed B-LT requirement report."""
     pdf_path = Path(pdf_path)
     report = {
         "has_embedded_signature": False,
+        "signature_crypto_valid": False,
         "has_signature_timestamp": False,
         "timestamp_valid": False,
         "has_dss": False,
@@ -246,51 +287,57 @@ def validate_pades_blt_requirements(pdf_path: str | Path) -> Dict:
         "target_profile": TARGET_PADES_PROFILE,
         "achieved_profile": "PAdES-B-B",
         "missing_requirements": [],
+        "validation_source": "independent_requirement_recomputation",
     }
     try:
         verify_result = verify_pdf_signature(pdf_path)
     except Exception:
-        report["missing_requirements"] = ["valid PDF signature"]
+        report["missing_requirements"] = _requirement_missing(report)
         return report
 
     adv = verify_result.get("advanced", {})
     vg = adv.get("verification_groups", {})
+    document_integrity = vg.get("document_integrity", {})
+    signature_crypto = vg.get("signature_crypto", {})
+    timestamp_group = vg.get("timestamp", {})
+    chain_validation = vg.get("chain_validation", {})
+    signer_cert_info = vg.get("signer_certificate", {})
 
-    report["has_embedded_signature"] = bool(vg.get("document_integrity", {}).get("signature_present"))
-    ts = vg.get("timestamp", {})
-    report["has_signature_timestamp"] = bool(ts.get("present"))
-    report["timestamp_valid"] = bool(ts.get("valid"))
-    report["chain_valid_against_demo_root"] = bool(vg.get("chain_validation", {}).get("chain_valid"))
+    report["has_embedded_signature"] = bool(document_integrity.get("signature_present"))
+    report["signature_crypto_valid"] = bool(signature_crypto.get("crypto_valid"))
+    report["has_signature_timestamp"] = bool(timestamp_group.get("present"))
+    report["timestamp_valid"] = bool(timestamp_group.get("valid"))
+    report["chain_valid_against_demo_root"] = bool(chain_validation.get("chain_valid"))
+    report["signing_cert_good_at_signing_time"] = signer_cert_info.get("valid_at_signing_time")
 
     dss_info = _inspect_dss(pdf_path)
     report["has_dss"] = dss_info["dss_present"]
     report["has_embedded_cert_chain"] = dss_info["has_embedded_cert_chain"]
     report["has_embedded_crl_or_ocsp"] = dss_info["has_embedded_crl_or_ocsp"]
-    report["revocation_evidence_valid"] = dss_info["has_embedded_crl_or_ocsp"]
+    report["revocation_evidence_valid"] = bool(dss_info["has_embedded_crl_or_ocsp"])
+    report["dss_detail"] = dss_info
 
-    signer_cert_info = vg.get("signer_certificate", {})
-    report["signing_cert_good_at_signing_time"] = signer_cert_info.get("valid_at_signing_time")
-
-    report["achieved_profile"] = adv.get("achieved_profile", "PAdES-B-B")
-    report["missing_requirements"] = adv.get("missing_requirements", [])
+    missing = _requirement_missing(report)
+    report["missing_requirements"] = missing
+    report["achieved_profile"] = _profile_from_requirement_report(report, missing)
     return report
 
 
 def _missing_requirements(timestamp_status: Dict, revocation_status: Dict, ltv_status: Dict) -> list[str]:
     missing = []
-    if timestamp_status.get("state") not in {"present", "valid"}:
-        missing.append("RFC3161 timestamp")
-    if revocation_status.get("state") not in {"available", "embedded"}:
-        missing.append("CRL or OCSP revocation evidence")
+    if timestamp_status.get("state") != "valid":
+        missing.append("valid RFC3161 timestamp")
+    if revocation_status.get("state") != "embedded":
+        missing.append("embedded CRL or OCSP revocation evidence")
     if ltv_status.get("state") != "embedded":
         missing.append("embedded PDF DSS/LTV validation info")
     return missing
 
 
 def _achieved_profile(timestamp_status: Dict, ltv_status: Dict, missing: list[str]) -> str:
-    if not missing and timestamp_status.get("state") in {"present", "valid"} and ltv_status.get("state") == "embedded":
+    if not missing and timestamp_status.get("state") == "valid" and ltv_status.get("state") == "embedded":
         return "PAdES-B-LT"
-    if timestamp_status.get("state") in {"present", "valid"}:
+    if timestamp_status.get("state") == "valid":
         return "PAdES-B-T"
     return "PAdES-B-B"
 
@@ -387,6 +434,7 @@ def sign_pdf_pades_blt(
             "pades_profile": achieved_profile,
             "missing_requirements": missing,
             "timestamp_status": timestamp_status,
+            "timestamp_provider": timestamp_provider,
             "revocation_evidence_status": revocation_status,
             "ltv_status": ltv_status,
             "digest_algorithm": digest_display,
@@ -404,6 +452,7 @@ def sign_pdf_pades_blt(
         "digest_algorithm": digest_display,
         "signature_algorithm": "RSA-PSS",
         "timestamp_status": timestamp_status,
+        "timestamp_provider": timestamp_provider,
         "revocation_evidence_status": revocation_status,
         "certificate_chain_status": verification_report["advanced"].get("certificate_chain_status"),
         "missing_requirements": missing,
@@ -509,9 +558,9 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
         timestamp_state = "valid" if timestamp_ok else "present"
         timestamp_time = getattr(timestamp_validity, "timestamp", None)
         timestamp_message = (
-            "RFC3161 signature timestamp is present and validates."
+            "Demo RFC3161 signature timestamp is present and validates."
             if timestamp_ok
-            else "RFC3161 signature timestamp is present, but validation is incomplete."
+            else "Demo RFC3161 signature timestamp is present, but validation is incomplete."
         )
 
     certificate_chain_status = "valid" if status.trusted else "invalid"
@@ -530,6 +579,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
         "standard": TIMESTAMP_STANDARD,
         "message": timestamp_message,
         "time": timestamp_time.isoformat() if timestamp_time else None,
+        "production_tsa": False,
     }
     missing = _missing_requirements(timestamp_status, revocation_status, ltv_status)
     achieved_profile = _achieved_profile(timestamp_status, ltv_status, missing)
@@ -549,7 +599,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
             "coverage_entire_file": bool(checks_by_key.get("document_integrity_valid", {}).get("ok")),
             "modified_after_signing": not bool(status.docmdp_ok),
             "coverage": str(status.coverage),
-            "modification_level": str(status.modification_level),
+            "modification_level": str(getattr(status, "modification_level", "unknown")),
         },
         "signature_crypto": {
             "digest_algorithm": ALGORITHM_POLICY.display_digest(),
@@ -572,6 +622,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
             "type": TIMESTAMP_STANDARD if timestamp_status["state"] in {"present", "valid"} else None,
             "valid": timestamp_status["state"] == "valid",
             "gen_time": timestamp_status["time"],
+            "production_tsa": False,
         },
         "revocation": {
             "required_for_target": True,
@@ -601,7 +652,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
         "trusted": status.trusted,
         "bottom_line": status.bottom_line,
         "coverage": str(status.coverage),
-        "modification_level": str(status.modification_level),
+        "modification_level": str(getattr(status, "modification_level", "unknown")),
         "signer_subject": signer_cert.subject.human_friendly if signer_cert else None,
         "signer_issuer": signer_cert.issuer.human_friendly if signer_cert else None,
         "signer_serial": str(signer_cert.serial_number) if signer_cert else None,
@@ -616,7 +667,7 @@ def verify_pdf_signature(pdf_path: str | Path) -> Dict:
         "certificate_chain_status": certificate_chain_status,
         "ltv_status": ltv_status,
         "verification_groups": verification_groups,
-   }
+    }
     return _report(all(c["ok"] for c in checks), checks, advanced)
 
 
@@ -638,6 +689,7 @@ def _report(accepted: bool, checks: list[Dict], advanced: Dict) -> Dict:
         "warnings": [
             "Target profile is PAdES-B-LT, but legal readiness is not asserted for this demo CA.",
             *([f"Missing for PAdES-B-LT: {', '.join(missing)}."] if missing else []),
+            "Timestamping uses a demo RFC3161 token generated by pyHanko DummyTimeStamper, not an external production TSA service.",
             "Trust root is the local SecureDoc Demo Root CA.",
         ],
         "verification_groups": advanced.get("verification_groups", {}),
@@ -652,5 +704,5 @@ def pades_capabilities() -> dict:
         "internal_steps": ["PAdES-B-B", "PAdES-B-T", "PAdES-B-LT"],
         "standards": ["RFC5280", "RFC3161", "RFC5652", "RFC6960", PADES_STANDARD],
         "status": "pades_blt_target_with_honest_achieved_profile",
-        "note": "The main API targets PAdES-B-LT and reports the achieved profile based on embedded timestamp and LTV evidence.",
+        "note": "The main API targets PAdES-B-LT and reports the achieved profile based on valid timestamp and embedded LTV evidence.",
     }
