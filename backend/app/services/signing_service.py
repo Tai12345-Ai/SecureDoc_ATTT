@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict
 
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.exceptions import InvalidSignature
 
@@ -34,7 +34,8 @@ from app.services.revocation_service import status as revocation_status, status_
 from app.services.timestamp_service import issue_demo_timestamp, verify_demo_timestamp
 from app.services.audit_service import append_event
 from app.services.certificate_lifecycle_service import get_certificate_status
-from app.services.pades_service import sign_pdf_pades_bb, verify_pdf_signature
+from app.services.algorithm_policy import ALGORITHM_POLICY
+from app.services.pades_service import sign_pdf_pades_blt
 
 _REQUESTS: Dict[str, Dict] = {}
 _SIGNED_PACKAGES: Dict[str, Dict] = {}
@@ -71,6 +72,7 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
     cert_status = _assert_certificate_usable(certificate_serial)
     request_id = "req_" + secrets.token_hex(12)
     safe_document_name = _safe_filename(document_name)
+    digest_algorithm = ALGORITHM_POLICY.display_digest()
     document_hash = sha256_bytes(document_bytes)
     nonce = secrets.token_hex(16)
     now = datetime.now(timezone.utc).isoformat()
@@ -80,7 +82,7 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
         "requestId": request_id,
         "documentName": safe_document_name,
         "documentHash": document_hash,
-        "hashAlgorithm": "SHA-256",
+        "hashAlgorithm": digest_algorithm,
         "certificateSerial": certificate_serial,
         "signingPurpose": signing_purpose,
         "nonce": nonce,
@@ -116,7 +118,7 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
         "request_id": request_id,
         "document_name": document_name,
         "document_hash": document_hash,
-        "hash_algorithm": "SHA-256",
+        "hash_algorithm": digest_algorithm,
         "certificate_serial": certificate_serial,
         "signing_purpose": signing_purpose,
         "nonce": nonce,
@@ -164,18 +166,21 @@ def sign_and_verify(request_id: str) -> Dict:
     private_key = get_user_private_key()
     cert = get_user_certificate()
     payload_bytes = canonical_json_bytes(record["payload"])
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash()
+    digest_algorithm = ALGORITHM_POLICY.display_digest()
 
     signature = private_key.sign(
         payload_bytes,
-        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-        hashes.SHA256(),
+        padding.PSS(mgf=padding.MGF1(hash_algorithm), salt_length=padding.PSS.MAX_LENGTH),
+        hash_algorithm,
     )
 
     timestamp = issue_demo_timestamp(record["document_hash"])
     signed_package = {
         "packageType": "SECUREDOC_SIGNED_PACKAGE_V1",
         "payload": record["payload"],
-        "signatureAlgorithm": "RSA-PSS-SHA256",
+        "signatureAlgorithm": "RSA-PSS",
+        "digestAlgorithm": digest_algorithm,
         "signatureBase64": b64e(signature),
         "signerCertificatePem": cert.public_bytes(serialization.Encoding.PEM).decode("utf-8"),
         "timestamp": timestamp,
@@ -190,7 +195,7 @@ def sign_and_verify(request_id: str) -> Dict:
         action="sign_and_verify",
         target=request_id,
         status="ok" if report["accepted"] else "rejected",
-        metadata={"signatureAlgorithm": "RSA-PSS-SHA256"},
+        metadata={"signatureAlgorithm": "RSA-PSS", "digestAlgorithm": digest_algorithm},
     )
     return report
 
@@ -204,12 +209,14 @@ def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
 
     cert = get_user_certificate()
     payload_bytes = canonical_json_bytes(record["payload"])
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash()
+    digest_algorithm = ALGORITHM_POLICY.display_digest()
     try:
         cert.public_key().verify(
             b64d(signature_base64),
             payload_bytes,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-            hashes.SHA256(),
+            padding.PSS(mgf=padding.MGF1(hash_algorithm), salt_length=padding.PSS.MAX_LENGTH),
+            hash_algorithm,
         )
     except InvalidSignature as exc:
         raise ValueError("Client signature does not verify against active certificate") from exc
@@ -218,7 +225,8 @@ def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
     signed_package = {
         "packageType": "SECUREDOC_CLIENT_SIGNED_PACKAGE_V1",
         "payload": record["payload"],
-        "signatureAlgorithm": "RSA-PSS-SHA256",
+        "signatureAlgorithm": "RSA-PSS",
+        "digestAlgorithm": digest_algorithm,
         "signatureBase64": signature_base64,
         "signerCertificatePem": cert.public_bytes(serialization.Encoding.PEM).decode("utf-8"),
         "timestamp": timestamp,
@@ -253,14 +261,14 @@ def sign_pdf_request(request_id: str) -> Dict:
     signer_cert_path.parent.mkdir(parents=True, exist_ok=True)
     signer_cert_path.write_bytes(signer_cert.public_bytes(serialization.Encoding.PEM))
 
-    sign_result = sign_pdf_pades_bb(
+    sign_result = sign_pdf_pades_blt(
         input_pdf_path=document_path,
         output_pdf_path=signed_path,
         signer_cert_path=signer_cert_path,
         reason=record["signing_purpose"],
         field_name=f"SecureDocSignature_{request_id}",
     )
-    verify_report = verify_pdf_signature(signed_path)
+    verify_report = sign_result["verification_report"]
     signed_hash = sha256_bytes(signed_path.read_bytes())
 
     metadata = {
@@ -270,18 +278,32 @@ def sign_pdf_request(request_id: str) -> Dict:
         "signed_document_hash": signed_hash,
         "original_filename": record["document_name"],
         "signed_path": str(signed_path),
+        "signed_pdf_path": str(signed_path),
         "signer_certificate_serial": record["certificate_serial"],
-        "pades_profile": sign_result["pades_profile"],
+        "target_profile": sign_result["target_profile"],
+        "achieved_profile": sign_result["achieved_profile"],
+        "pades_profile": sign_result["achieved_profile"],
+        "digest_algorithm": sign_result["digest_algorithm"],
+        "signature_algorithm": sign_result["signature_algorithm"],
+        "timestamp_status": sign_result["timestamp_status"],
+        "revocation_evidence_status": sign_result["revocation_evidence_status"],
+        "certificate_chain_status": sign_result["certificate_chain_status"],
+        "missing_requirements": sign_result["missing_requirements"],
+        "verification_report": verify_report,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _SIGNED_PDF_FILES[file_id] = metadata
 
     append_event(
         actor="alice@example.com",
-        action="sign_pdf_pades_bb",
+        action="sign_pdf_pades_blt",
         target=request_id,
         status="ok" if verify_report["accepted"] else "rejected",
-        metadata={"fileId": file_id, "padesProfile": sign_result["pades_profile"]},
+        metadata={
+            "fileId": file_id,
+            "targetProfile": sign_result["target_profile"],
+            "achievedProfile": sign_result["achieved_profile"],
+        },
     )
 
     return {
@@ -314,7 +336,11 @@ def get_signing_history() -> list[Dict]:
             "request_id": record["request_id"],
             "original_filename": record["original_filename"],
             "signer_certificate_serial": record["signer_certificate_serial"],
+            "target_profile": record.get("target_profile", "PAdES-B-LT"),
+            "achieved_profile": record.get("achieved_profile", record["pades_profile"]),
             "pades_profile": record["pades_profile"],
+            "digest_algorithm": record.get("digest_algorithm"),
+            "signature_algorithm": record.get("signature_algorithm"),
             "created_at": record["created_at"],
             "signed_document_hash": record["signed_document_hash"],
             "download_url": f"/api/user-signing/signed-files/{record['file_id']}",
@@ -340,13 +366,14 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     cert = x509.load_pem_x509_certificate(package["signerCertificatePem"].encode("utf-8"))
     public_key = cert.public_key()
     signer_cert_serial = str(cert.serial_number)
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(package.get("digestAlgorithm"))
 
     try:
         public_key.verify(
             b64d(package["signatureBase64"]),
             payload_bytes,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-            hashes.SHA256(),
+            padding.PSS(mgf=padding.MGF1(hash_algorithm), salt_length=padding.PSS.MAX_LENGTH),
+            hash_algorithm,
         )
         add("cryptoValid", "Chữ ký mật mã hợp lệ", True, "Public key trong chứng thư xác minh được chữ ký RSA-PSS.")
     except InvalidSignature:

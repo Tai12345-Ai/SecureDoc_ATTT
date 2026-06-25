@@ -12,6 +12,8 @@ export function VerificationSummary({ report, title = "PDF verification report" 
   const details = report.advanced || {};
   const passed = report.checks?.filter((check: any) => check.ok).length || 0;
   const total = report.checks?.length || 0;
+  const timestamp = details.timestamp_status || {};
+  const revocation = details.revocation_evidence_status || {};
 
   return (
     <div className={report.accepted ? "final-card accepted" : "final-card rejected"} aria-live="polite">
@@ -27,31 +29,32 @@ export function VerificationSummary({ report, title = "PDF verification report" 
 
       <div className="summary-grid">
         <p><span>Kết quả</span><strong>{report.accepted ? "Chữ ký hợp lệ" : "Không hợp lệ"}</strong></p>
-        <p><span>Profile</span><strong>{details.pades_profile || "PAdES-B-B demo"}</strong></p>
+        <p><span>Target profile</span><strong>{details.target_profile || "PAdES-B-LT"}</strong></p>
+        <p><span>Achieved profile</span><strong>{details.achieved_profile || details.pades_profile || "Không xác định"}</strong></p>
         <p><span>Checks passed</span><strong>{passed}/{total}</strong></p>
-        <p><span>Người ký</span><strong>{details.signer_subject || "Không xác định"}</strong></p>
-        <p><span>Serial chứng thư</span><strong>{details.signer_serial || "Không xác định"}</strong></p>
-        <p><span>Issuer</span><strong>{details.signer_issuer || "Không xác định"}</strong></p>
-        <p><span>Signature field</span><strong>{details.signature_field || "Không có"}</strong></p>
-        <p><span>Số chữ ký</span><strong>{details.signature_count ?? 0}</strong></p>
-        <p><span>Coverage</span><strong>{details.coverage || "Không xác định"}</strong></p>
         <p><span>Digest</span><strong>{details.digest_algorithm || "SHA-256"}</strong></p>
+        <p><span>Signature algorithm</span><strong>{details.signature_algorithm || "RSA-PSS"}</strong></p>
+        <p><span>Signer</span><strong>{details.signer_subject || "Không xác định"}</strong></p>
+        <p><span>Issuer</span><strong>{details.signer_issuer || "Không xác định"}</strong></p>
+        <p><span>Timestamp</span><strong>{timestamp.state || "missing"}</strong></p>
+        <p><span>Revocation evidence</span><strong>{revocation.state || "missing"}</strong></p>
+        <p><span>Certificate chain</span><strong>{details.certificate_chain_status || "Không xác định"}</strong></p>
+        <p><span>Serial chứng thư</span><strong>{details.signer_serial || "Không xác định"}</strong></p>
       </div>
 
       <div className="checks">
         {report.checks?.map((check: any) => <CheckCard key={check.key} check={check} />)}
       </div>
 
-      <div className="legal-box">
-        <strong>Legal readiness: {String(report.legal_ready)}</strong>
-        <p>Phase 1 mới đạt PAdES-B-B demo. Timestamp RFC3161, revocation OCSP/CRL và key custody thật thuộc các phase sau.</p>
+      <div className="badge-row">
+        <span className="small-badge">Legal readiness: {String(report.legal_ready)}</span>
       </div>
 
       {report.warnings?.length > 0 && (
-        <div className="warning-box">
-          <strong>Cảnh báo demo</strong>
+        <details className="warning-box">
+          <summary>Cảnh báo demo</summary>
           <ul>{report.warnings.map((warning: string) => <li key={warning}>{warning}</li>)}</ul>
-        </div>
+        </details>
       )}
 
       <AdvancedDetails data={report.advanced} />

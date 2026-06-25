@@ -45,6 +45,10 @@ def test_pades_sign_and_verify_pdf():
     confirm_intent(prepared["request_id"])
     result = sign_pdf_request(prepared["request_id"])
     assert result["verification"]["status"] == "accepted"
+    assert result["metadata"]["target_profile"] == "PAdES-B-LT"
+    assert result["metadata"]["achieved_profile"] == "PAdES-B-LT"
+    assert result["metadata"]["timestamp_status"]["state"] == "valid"
+    assert result["metadata"]["revocation_evidence_status"]["state"] == "embedded"
     assert result["file_id"]
 
 
@@ -64,7 +68,9 @@ def test_pades_verify_rejects_tampered_pdf():
     signed_path = Path(result["metadata"]["signed_path"])
     tampered_path = signed_path.with_name(f"{signed_path.stem}_tampered.pdf")
     data = bytearray(signed_path.read_bytes())
-    index = max(0, len(data) - 200)
+    page_marker = data.find(b"/MediaBox")
+    index = data.find(b"200", page_marker)
+    assert index != -1
     data[index] = (data[index] + 1) % 255
     tampered_path.write_bytes(data)
 
@@ -365,3 +371,27 @@ def test_remote_signing_requires_confirmed_intent_and_mfa():
     result = remote_sign_request(prepared["request_id"], "000000")
     assert result["report"]["status"] == "accepted"
     assert result["remote_signing"]["privateKeyExposed"] is False
+
+
+def test_blind_signature_flow_uses_separate_scheme_and_spent_registry():
+    import uuid
+    from app.services.blind_signature_service import run_blind_signature_flow
+
+    message = f"privacy-token-{uuid.uuid4()}"
+    first = run_blind_signature_flow(message)
+    assert first["target_scheme"] == "RFC9474-RSABSSA"
+    assert first["achieved_scheme"] == "RSABSSA-SHA384-PSS-Randomized"
+    assert first["scheme_complete"] is True
+    assert first["production_ready"] is False
+    assert first["blind_signature_valid"] is True
+    assert first["spent_status"] == "spent"
+    assert first["redeemed"] is True
+    assert first["advanced"]["key"]["purpose"] == "blind-signature-only"
+    assert first["advanced"]["variant"] == "RSABSSA-SHA384-PSS-Randomized"
+    assert first["advanced"]["hash"] == "SHA-384"
+
+    second = run_blind_signature_flow(message)
+    assert second["blind_signature_valid"] is True
+    assert second["scheme_complete"] is True
+    assert second["spent_status"] == "already_spent"
+    assert second["redeemed"] is False

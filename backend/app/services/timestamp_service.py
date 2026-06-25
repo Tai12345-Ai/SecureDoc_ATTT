@@ -11,11 +11,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.serialization import load_pem_private_key, load_pem_public_key
 
 from app.core.config import settings
+from app.services.algorithm_policy import ALGORITHM_POLICY
 from app.services.crypto_utils import b64d, b64e, canonical_json_bytes, sha256_bytes
 
 TSA_KEY = settings.demo_tsa_dir / "tsa_key.pem"
@@ -62,7 +63,7 @@ def _tsa_public_key():
 def _token_payload(message_imprint_sha256: str, serial: str, gen_time: str) -> dict:
     return {
         "tokenType": "SECUREDOC_DEMO_TSA_TOKEN_V1",
-        "hashAlgorithm": "SHA-256",
+        "hashAlgorithm": ALGORITHM_POLICY.display_digest(),
         "messageImprintSha256": message_imprint_sha256,
         "serial": serial,
         "genTime": gen_time,
@@ -79,14 +80,16 @@ def issue_demo_timestamp(message_imprint_sha256: str) -> dict:
     serial = secrets.token_hex(12)
     gen_time = datetime.now(timezone.utc).isoformat()
     payload = _token_payload(message_imprint_sha256, serial, gen_time)
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash()
     signature = _tsa_private_key().sign(
         canonical_json_bytes(payload),
-        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-        hashes.SHA256(),
+        padding.PSS(mgf=padding.MGF1(hash_algorithm), salt_length=padding.PSS.MAX_LENGTH),
+        hash_algorithm,
     )
     return {
         **payload,
-        "signatureAlgorithm": "RSA-PSS-SHA256",
+        "signatureAlgorithm": "RSA-PSS",
+        "digestAlgorithm": ALGORITHM_POLICY.display_digest(),
         "signatureBase64": b64e(signature),
         "warning": "Demo TSA token only. Production requires RFC3161 TimeStampToken.",
     }
@@ -127,12 +130,13 @@ def verify_demo_timestamp(token: dict, expected_imprint: str) -> dict:
 
     imprint_ok = token.get("messageImprintSha256") == expected_imprint
     payload = _token_payload(token["messageImprintSha256"], token["serial"], token["genTime"])
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(token.get("digestAlgorithm") or token.get("hashAlgorithm"))
     try:
         _tsa_public_key().verify(
             b64d(token["signatureBase64"]),
             canonical_json_bytes(payload),
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-            hashes.SHA256(),
+            padding.PSS(mgf=padding.MGF1(hash_algorithm), salt_length=padding.PSS.MAX_LENGTH),
+            hash_algorithm,
         )
         signature_ok = True
     except (InvalidSignature, ValueError):
