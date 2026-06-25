@@ -167,3 +167,23 @@ export function runBlindSignature(message: string) {
     body: JSON.stringify({ message })
   });
 }
+
+export function getBlindSignerInfo() {
+  return jfetch(`${API_BASE}/blind-signature/signer-info`);
+}
+
+export function blindSign(blinded_msg: string, key_id: string) {
+  return jfetch(`${API_BASE}/blind-signature/blind-sign`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ blinded_msg, key_id })
+  });
+}
+
+export function redeemBlindToken(token_hash: string, signature: string, msg_prefix_hex: string, token: string) {
+  return jfetch(`${API_BASE}/blind-signature/redeem`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ token_hash, signature, msg_prefix_hex, token })
+  });
+}

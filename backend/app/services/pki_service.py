@@ -46,10 +46,10 @@ DEMO_POLICY_OID = x509.ObjectIdentifier("1.3.6.1.4.1.55555.1.1")
 DEMO_DOCUMENT_SIGNING_POLICY_OID = x509.ObjectIdentifier("1.3.6.1.4.1.55555.1.2")
 DEMO_TIMESTAMP_POLICY_OID = x509.ObjectIdentifier("1.3.6.1.4.1.55555.1.3")
 DEMO_OCSP_POLICY_OID = x509.ObjectIdentifier("1.3.6.1.4.1.55555.1.4")
-DEMO_CRL_URL = "http://localhost:8000/api/revocation/crl.pem"
+DEMO_CRL_URL = "http://localhost:8000/api/revocation/crl.der"
 DEMO_OCSP_URL = "http://localhost:8000/api/revocation/ocsp"
-DEMO_ROOT_CA_URL = "http://localhost:8000/api/certificates/demo-pki/root"
-DEMO_INTERMEDIATE_CA_URL = "http://localhost:8000/api/certificates/demo-pki/intermediate"
+DEMO_ROOT_CA_URL = "http://localhost:8000/api/certificates/demo-pki/root.der"
+DEMO_INTERMEDIATE_CA_URL = "http://localhost:8000/api/certificates/demo-pki/intermediate.der"
 
 def _write(path: Path, data: bytes):
     path.parent.mkdir(parents=True, exist_ok=True)

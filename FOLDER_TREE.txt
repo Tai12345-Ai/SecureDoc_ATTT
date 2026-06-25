@@ -1,59 +1,91 @@
-  README.md
-  requirements.txt
-  backend/
-    app/
-      __init__.py
-      main.py
-      api/
-        __init__.py
-        routes_audit.py
-        routes_blind_signature.py
-        routes_certificates.py
-        routes_pipeline.py
-        routes_user_signing.py
-      core/
-        __init__.py
-        config.py
-      domain/
-        __init__.py
-        schemas.py
-      services/
-        __init__.py
-        audit_service.py
-        blind_signature_service.py
-        crypto_utils.py
-        pades_service.py
-        pki_service.py
-        revocation_service.py
-        signing_service.py
-        timestamp_service.py
-      storage/
-        __init__.py
-    tests/
-      __init__.py
-      test_services.py
-  frontend/
-    index.html
-    package.json
-    src/
-      App.tsx
-      api/
-        client.ts
-      components/
-        AdvancedDetails.tsx
-        CheckCard.tsx
-      modes/
-        BlindSignaturePage.tsx
-        PipelineDemoPage.tsx
-        UserSigningPage.tsx
-      styles/
-        main.css
-  docs/
-    BASELINE_MAPPING.md
-    FULL_REQUIREMENTS_COVERAGE.md
-    NEXT_IMPLEMENTATION_STEPS.md
-  scripts/
-  samples/
-    demo_contract.txt
-  data/
-    .gitkeep
+securedoc_full_demo_v4/
+├── README.md
+├── FOLDER_TREE.txt
+├── requirements.txt
+├── .gitignore
+│
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── routes_audit.py
+│   │   │   ├── routes_blind_signature.py
+│   │   │   ├── routes_certificates.py
+│   │   │   ├── routes_key_enrollment.py
+│   │   │   ├── routes_pipeline.py
+│   │   │   ├── routes_remote_signing.py
+│   │   │   ├── routes_revocation.py
+│   │   │   ├── routes_timestamp.py
+│   │   │   ├── routes_user_signing.py
+│   │   │   └── routes_verification.py
+│   │   ├── core/
+│   │   │   ├── __init__.py
+│   │   │   └── config.py
+│   │   ├── domain/
+│   │   │   ├── __init__.py
+│   │   │   └── schemas.py
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   ├── algorithm_policy.py
+│   │   │   ├── audit_service.py
+│   │   │   ├── blind_signature_service.py
+│   │   │   ├── certificate_lifecycle_service.py
+│   │   │   ├── crypto_utils.py
+│   │   │   ├── pades_service.py
+│   │   │   ├── pki_service.py
+│   │   │   ├── proof_of_possession_service.py
+│   │   │   ├── remote_signing_service.py
+│   │   │   ├── revocation_service.py
+│   │   │   ├── signing_service.py
+│   │   │   └── timestamp_service.py
+│   │   └── storage/
+│   │       └── __init__.py
+│   └── tests/
+│       ├── __init__.py
+│       └── test_services.py
+│
+├── frontend/
+│   ├── index.html
+│   ├── package.json
+│   └── src/
+│       ├── App.tsx
+│       ├── api/
+│       │   └── client.ts
+│       ├── components/
+│       │   ├── AdvancedDetails.tsx
+│       │   ├── CheckCard.tsx
+│       │   ├── DownloadSignedPdfButton.tsx
+│       │   └── VerificationSummary.tsx
+│       ├── modes/
+│       │   ├── BlindSignaturePage.tsx
+│       │   ├── CertificateLifecyclePage.tsx
+│       │   ├── PipelineDemoPage.tsx
+│       │   ├── SecurityServicesPage.tsx
+│       │   └── UserSigningPage.tsx
+│       └── styles/
+│           └── main.css
+│
+├── data/                          # Runtime data (gitignored)
+│   ├── demo_pki/
+│   ├── certificates/
+│   ├── documents/
+│   ├── signed_documents/
+│   ├── signed_packages/
+│   ├── demo_tsa/
+│   ├── key_enrollment/
+│   ├── blind_signature/
+│   ├── audit_events.jsonl
+│   └── revocations.json
+│
+├── docs/
+│   ├── BASELINE_MAPPING.md
+│   ├── FINAL_STANDARDIZATION_PLAN.md
+│   ├── FULL_REQUIREMENTS_COVERAGE.md
+│   ├── NEXT_IMPLEMENTATION_STEPS.md
+│   ├── README_TEST_GUIDE.md
+│   ├── TestPlan.md
+│   └── SECUREDOC_NEXT_IMPROVEMENTS_WITH_REPO_BASELINE.md
+│
+└── samples/
