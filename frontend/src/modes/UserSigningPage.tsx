@@ -84,7 +84,7 @@ export function UserSigningPage() {
   async function doSignPdf() {
     if (!prepared || !confirmed) return;
     if (!file?.name.toLowerCase().endsWith(".pdf")) {
-      setError("Phase 1 ký PAdES chỉ nhận file PDF.");
+      setError("Luồng ký PDF PAdES-B-LT chỉ nhận file PDF.");
       return;
     }
     setError("");
@@ -130,6 +130,7 @@ export function UserSigningPage() {
       <div className="user-grid">
         <aside className="sidebar-card identity-panel">
           <h3>Người ký</h3>
+          <span className="demo-badge">Demo user</span>
           <p><strong>{workspace?.user?.name || "Alice Demo Signer"}</strong></p>
           <p>{workspace?.user?.email || "alice@example.com"}</p>
 
@@ -140,7 +141,12 @@ export function UserSigningPage() {
               <p><span>Subject</span><strong>{cert.subject}</strong></p>
               <p><span>Issuer</span><strong>{cert.issuer}</strong></p>
               <p><span>Status</span><strong className="green">{cert.status}</strong></p>
-              <p><span>Algorithm</span><strong>{cert.algorithm}</strong></p>
+              <p><span>Public key</span><strong>{cert.public_key_algorithm} {cert.public_key_size}</strong></p>
+              <p><span>Certificate signature</span><strong>{cert.certificate_signature_algorithm}</strong></p>
+              <p><span>Document signature</span><strong>{cert.document_signature_algorithm}</strong></p>
+              <p><span>Digest</span><strong>{cert.digest_algorithm}</strong></p>
+              <p><span>Profile</span><strong>{cert.certificate_profile}</strong></p>
+              <p><span>Standards</span><strong>{cert.standards?.join(", ")}</strong></p>
             </div>
           ) : <p>Đang tải chứng thư...</p>}
         </aside>
@@ -163,7 +169,7 @@ export function UserSigningPage() {
             <div className="actions">
               <button type="button" onClick={doPrepare} disabled={!file || !!busy}>{busy === "prepare" ? "Đang tạo..." : "Tạo yêu cầu ký"}</button>
               <button type="button" onClick={doConfirm} disabled={!prepared || !!busy}>{busy === "confirm" ? "Đang xác nhận..." : "Xác nhận OTP/TOTP"}</button>
-              <button className="primary" type="button" onClick={doSignPdf} disabled={!confirmed || !!busy}>{busy === "sign-pdf" ? "Đang ký PDF..." : "Ký PDF/PAdES"}</button>
+              <button className="primary" type="button" onClick={doSignPdf} disabled={!confirmed || !!busy}>{busy === "sign-pdf" ? "Đang ký PDF..." : "Ký PDF PAdES-B-LT"}</button>
             </div>
             <details className="advanced-demo">
               <summary>Advanced demo: ký canonical payload</summary>
@@ -195,7 +201,8 @@ export function UserSigningPage() {
 
           {pdfResult && (
             <div className="summary-card good">
-              <h3>PDF đã được ký PAdES-B-B</h3>
+              <h3>PDF đã được ký</h3>
+              <p>Target profile: <strong>{pdfResult.metadata?.target_profile || "PAdES-B-LT"}</strong>; achieved profile: <strong>{pdfResult.metadata?.achieved_profile}</strong></p>
               <p>Signed file ID: <code>{pdfResult.file_id}</code></p>
               <DownloadSignedPdfButton fileId={pdfResult.file_id} />
               <VerificationSummary report={pdfResult.verification} title="Signed PDF verification" />
@@ -248,7 +255,7 @@ export function UserSigningPage() {
                   <div className="history-item" key={item.file_id}>
                     <div>
                       <strong>{item.original_filename}</strong>
-                      <p>{item.pades_profile} · {new Date(item.created_at).toLocaleString()}</p>
+                      <p>{item.target_profile || "PAdES-B-LT"} → {item.achieved_profile || item.pades_profile} · {new Date(item.created_at).toLocaleString()}</p>
                       <code>{item.file_id}</code>
                     </div>
                     <DownloadSignedPdfButton fileId={item.file_id} />

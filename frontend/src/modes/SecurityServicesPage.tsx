@@ -160,7 +160,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card service-card">
         <h3>Revocation Service</h3>
-        <p className="hint">Demo CRL hiện chưa ký theo chuẩn X.509 CRL. Production cần signed CRL hoặc OCSP và policy kiểm tra revocation tại signing time nếu có trusted timestamp.</p>
+        <p className="hint">Backend tạo signed X.509 CRL và OCSP response cho demo. Production vẫn cần publication endpoint, policy kiểm tra revocation tại signing time và vận hành CA/TSA/OCSP tách biệt.</p>
         <label htmlFor="revocation-serial">Certificate serial</label>
         <input id="revocation-serial" value={serial} onChange={e => setSerial(e.target.value)} placeholder="Paste certificate serial" />
         <div className="actions">

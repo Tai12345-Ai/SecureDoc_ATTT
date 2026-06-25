@@ -21,7 +21,7 @@ export function BlindSignaturePage() {
       <div className="section-title mode-header">
         <div>
           <h2>Blind Signature Mode</h2>
-          <p>Module riêng cho chữ ký mù: không gộp vào ký tài liệu định danh.</p>
+          <p>Blind signature is for anonymous/privacy token signing, not PDF/PAdES document signing.</p>
         </div>
         <div className="mode-outcome">
           <strong>Privacy job</strong>
@@ -36,10 +36,21 @@ export function BlindSignaturePage() {
       </div>
 
       {result && (
-        <div className={result.verified ? "final-card accepted" : "final-card rejected"} aria-live="polite">
+        <div className={result.blind_signature_valid ? "final-card accepted" : "final-card rejected"} aria-live="polite">
           <h2>{result.title}</h2>
           <p>{result.message}</p>
           <p className="hint">{result.unlinkability_note}</p>
+
+          <div className="summary-grid">
+            <p><span>Target scheme</span><strong>{result.target_scheme}</strong></p>
+            <p><span>Achieved scheme</span><strong>{result.achieved_scheme}</strong></p>
+            <p><span>Scheme complete</span><strong>{String(result.scheme_complete)}</strong></p>
+            <p><span>Valid</span><strong>{String(result.blind_signature_valid)}</strong></p>
+            <p><span>Production ready</span><strong>{String(result.production_ready)}</strong></p>
+            <p><span>Key ID</span><strong>{result.key_id}</strong></p>
+            <p><span>Spent status</span><strong>{result.spent_status}</strong></p>
+            <p><span>Token hash</span><strong>{result.token_hash}</strong></p>
+          </div>
 
           <div className="blind-steps">
             {result.steps.map((s: any, idx: number) => (
@@ -53,6 +64,13 @@ export function BlindSignaturePage() {
               </div>
             ))}
           </div>
+
+          {result.warnings?.length > 0 && (
+            <details className="warning-box">
+              <summary>Warnings</summary>
+              <ul>{result.warnings.map((warning: string) => <li key={warning}>{warning}</li>)}</ul>
+            </details>
+          )}
 
           <AdvancedDetails data={result.advanced} />
         </div>

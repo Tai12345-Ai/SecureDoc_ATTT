@@ -6,10 +6,15 @@ distinguish "revoked before signing" from "revoked after a trusted timestamp".
 """
 
 import json
-from datetime import datetime, timezone
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
+
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+from cryptography.x509 import ocsp
 
 from app.core.config import settings
+from app.services.algorithm_policy import ALGORITHM_POLICY
+from app.services.crypto_utils import b64e
 
 
 def _now() -> str:
@@ -84,12 +89,134 @@ def status_at(serial: str, at_time_iso: str | None) -> dict:
     }
 
 
-def crl() -> dict:
-    records = sorted(_read_records(), key=lambda record: record["revoked_at"])
-    return {
-        "crlType": "DEMO_UNSIGNED_CRL_V1",
-        "issuer": "SecureDoc Demo Intermediate CA",
-        "thisUpdate": _now(),
-        "revokedCertificates": records,
-        "warning": "Demo CRL is unsigned. Production requires signed X.509 CRL or OCSP.",
+def _reason_flag(reason: str | None) -> x509.ReasonFlags:
+    mapping = {
+        "keyCompromise": x509.ReasonFlags.key_compromise,
+        "caCompromise": x509.ReasonFlags.ca_compromise,
+        "affiliationChanged": x509.ReasonFlags.affiliation_changed,
+        "superseded": x509.ReasonFlags.superseded,
+        "cessationOfOperation": x509.ReasonFlags.cessation_of_operation,
+        "certificateHold": x509.ReasonFlags.certificate_hold,
     }
+    return mapping.get(reason or "", x509.ReasonFlags.cessation_of_operation)
+
+
+def _cert_to_cryptography(cert) -> x509.Certificate:
+    if isinstance(cert, x509.Certificate):
+        return cert
+    if hasattr(cert, "dump"):
+        return x509.load_der_x509_certificate(cert.dump())
+    raise TypeError("Unsupported certificate type")
+
+
+def generate_signed_crl() -> dict:
+    from app.services.pki_service import get_intermediate_certificate, get_intermediate_private_key
+
+    issuer_cert = get_intermediate_certificate()
+    issuer_key = get_intermediate_private_key()
+    now = datetime.now(timezone.utc)
+    builder = (
+        x509.CertificateRevocationListBuilder()
+        .issuer_name(issuer_cert.subject)
+        .last_update(now)
+        .next_update(now + timedelta(days=1))
+        .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_key.public_key()), critical=False)
+        .add_extension(x509.CRLNumber(int(now.timestamp())), critical=False)
+    )
+    for record in _read_records():
+        revoked_at = _parse_time(record.get("revoked_at")) or now
+        revoked = (
+            x509.RevokedCertificateBuilder()
+            .serial_number(int(record["serial"]))
+            .revocation_date(revoked_at)
+            .add_extension(x509.CRLReason(_reason_flag(record.get("reason"))), critical=False)
+            .build()
+        )
+        builder = builder.add_revoked_certificate(revoked)
+
+    crl_obj = builder.sign(private_key=issuer_key, algorithm=ALGORITHM_POLICY.cryptography_hash())
+    der = crl_obj.public_bytes(serialization.Encoding.DER)
+    pem = crl_obj.public_bytes(serialization.Encoding.PEM).decode("ascii")
+    return {
+        "crl_type": "SIGNED_X509_CRL",
+        "standard": "RFC5280",
+        "issuer": issuer_cert.subject.rfc4514_string(),
+        "this_update": crl_obj.last_update_utc.isoformat(),
+        "next_update": crl_obj.next_update_utc.isoformat(),
+        "revoked_certificate_count": len(crl_obj),
+        "signature_algorithm": crl_obj.signature_hash_algorithm.name.upper(),
+        "crl_pem": pem,
+        "crl_der": der,
+        "crl_der_base64": b64e(der),
+    }
+
+
+def get_ocsp_response(cert) -> dict:
+    from app.services.pki_service import (
+        get_intermediate_certificate,
+        get_ocsp_responder_certificate,
+        get_ocsp_responder_private_key,
+    )
+
+    subject_cert = _cert_to_cryptography(cert)
+    issuer_cert = get_intermediate_certificate()
+    responder_cert = get_ocsp_responder_certificate()
+    responder_key = get_ocsp_responder_private_key()
+    cert_status = status(str(subject_cert.serial_number))
+    revoked = cert_status["revoked"]
+    now = datetime.now(timezone.utc)
+
+    builder = ocsp.OCSPResponseBuilder().add_response(
+        cert=subject_cert,
+        issuer=issuer_cert,
+        algorithm=ALGORITHM_POLICY.cryptography_hash(),
+        cert_status=ocsp.OCSPCertStatus.REVOKED if revoked else ocsp.OCSPCertStatus.GOOD,
+        this_update=now,
+        next_update=now + timedelta(days=1),
+        revocation_time=_parse_time(cert_status.get("revoked_at")) if revoked else None,
+        revocation_reason=_reason_flag(cert_status.get("reason")) if revoked else None,
+    )
+    builder = builder.responder_id(ocsp.OCSPResponderEncoding.HASH, responder_cert)
+    response = builder.sign(private_key=responder_key, algorithm=ALGORITHM_POLICY.cryptography_hash())
+    der = response.public_bytes(serialization.Encoding.DER)
+    return {
+        "response_type": "OCSP_RESPONSE",
+        "standard": "RFC6960",
+        "serial": str(subject_cert.serial_number),
+        "certificate_status": cert_status["status"],
+        "responder": responder_cert.subject.rfc4514_string(),
+        "produced_at": response.produced_at_utc.isoformat(),
+        "ocsp_der": der,
+        "ocsp_der_base64": b64e(der),
+    }
+
+
+def collect_revocation_info_for_certificate(cert) -> dict:
+    crl_data = generate_signed_crl()
+    ocsp_data = get_ocsp_response(cert)
+    return {
+        "crl_der": [crl_data["crl_der"]],
+        "ocsp_der": [ocsp_data["ocsp_der"]],
+        "sources": [
+            {
+                "type": "crl",
+                "standard": crl_data["standard"],
+                "issuer": crl_data["issuer"],
+                "revoked_certificate_count": crl_data["revoked_certificate_count"],
+                "der_base64": crl_data["crl_der_base64"],
+            },
+            {
+                "type": "ocsp",
+                "standard": ocsp_data["standard"],
+                "serial": ocsp_data["serial"],
+                "certificate_status": ocsp_data["certificate_status"],
+                "der_base64": ocsp_data["ocsp_der_base64"],
+            },
+        ],
+        "message": "Collected signed RFC5280 CRL and RFC6960 OCSP response for the signer certificate.",
+    }
+
+
+def crl() -> dict:
+    signed = generate_signed_crl()
+    return {key: value for key, value in signed.items() if key != "crl_der"}

@@ -21,7 +21,7 @@ STEPS = [
         id="mechanisms",
         title="Cơ chế tạo chữ ký số",
         user_explanation="Hệ thống băm tài liệu, tạo payload chuẩn hóa, xác nhận ý chí ký rồi mới ký.",
-        technical_explanation="SHA-256(document), canonical JSON, nonce, RSA-PSS-SHA256 signature.",
+        technical_explanation="Policy-selected document digest, canonical JSON, nonce, RSA-PSS signature.",
         service="Signing Service",
         artifacts=["sha256", "canonicalPayload", "nonce", "signatureBase64"],
     ),
