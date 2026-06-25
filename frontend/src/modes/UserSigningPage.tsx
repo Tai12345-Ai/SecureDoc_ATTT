@@ -137,16 +137,24 @@ export function UserSigningPage() {
           <h3>Chứng thư đang dùng</h3>
           {cert ? (
             <div className="cert-box">
-              <p><span>Serial</span><strong>{cert.serial}</strong></p>
-              <p><span>Subject</span><strong>{cert.subject}</strong></p>
-              <p><span>Issuer</span><strong>{cert.issuer}</strong></p>
+              <p><span>Signer</span><strong>{cert.subject?.split(",")[0]?.replace("CN=","") || cert.subject}</strong></p>
+              <p><span>Email</span><strong>{cert.subject?.match(/emailAddress=([^,]+)/)?.[1] || "alice@example.com"}</strong></p>
+              <p><span>Serial</span><strong>{cert.serial ? cert.serial.slice(0, 24) + "…" : ""}</strong></p>
               <p><span>Status</span><strong className="green">{cert.status}</strong></p>
               <p><span>Public key</span><strong>{cert.public_key_algorithm} {cert.public_key_size}</strong></p>
-              <p><span>Certificate signature</span><strong>{cert.certificate_signature_algorithm}</strong></p>
               <p><span>Document signature</span><strong>{cert.document_signature_algorithm}</strong></p>
               <p><span>Digest</span><strong>{cert.digest_algorithm}</strong></p>
-              <p><span>Profile</span><strong>{cert.certificate_profile}</strong></p>
-              <p><span>Standards</span><strong>{cert.standards?.join(", ")}</strong></p>
+              <p><span>Target profile</span><strong>PAdES-B-LT</strong></p>
+              <details className="advanced-demo">
+                <summary>Certificate details</summary>
+                <div className="cert-box" style={{marginTop: "8px"}}>
+                  <p><span>Subject</span><strong>{cert.subject}</strong></p>
+                  <p><span>Issuer</span><strong>{cert.issuer}</strong></p>
+                  <p><span>Certificate signature</span><strong>{cert.certificate_signature_algorithm}</strong></p>
+                  <p><span>Profile</span><strong>{cert.certificate_profile}</strong></p>
+                  <p><span>Standards</span><strong>{cert.standards?.join(", ")}</strong></p>
+                </div>
+              </details>
             </div>
           ) : <p>Đang tải chứng thư...</p>}
         </aside>

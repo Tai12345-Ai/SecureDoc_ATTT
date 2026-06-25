@@ -1,48 +1,47 @@
 # SecureDoc Full Demo v4
 
-Bản v4 thiết kế lại SecureDoc theo hướng **web demo chữ ký số đầy đủ cho học phần ATTT**, lấy baseline từ:
+Educational mini digital-signature system for an ATTT (Information Security) course. **This is not a legally trusted production signing system.**
 
-1. `pyHanko`  
-   → Ký PDF/PAdES, verify, timestamp, X.509 validation.
+## Two Independent Pipelines
 
-2. `pyca/cryptography`  
-   → Sinh khóa, RSA-PSS/ECDSA/EdDSA, certificate, proof-of-possession.
+### 1. Document Signing Pipeline
 
-3. `PyCryptodome`  
-   → Demo primitive và blind RSA mức toán học.
+**Target:** PAdES-B-LT signed PDF.
 
-4. `Cashu Nutshell`  
-   → Tham khảo kiến trúc chữ ký mù / privacy token / Chaumian e-cash.
+**Technical standards:**
 
-5. `DSS`  
-   → Reference kiến trúc tổng thể cho dịch vụ chữ ký số: signing service, validation service, timestamp service, PAdES/XAdES/CAdES service.
+| Standard | Scope |
+|----------|-------|
+| RFC 5280 | X.509 certificates, CA profile, CRL, path validation |
+| RFC 3161 | Timestamping |
+| RFC 6960 | OCSP |
+| RFC 5652 | CMS |
+| ETSI EN 319 142-1 | PAdES baseline signatures |
 
-6. `EJBCA + SignServer`  
-   → Reference cho CA/PKI/certificate lifecycle và signing service thực tế.
+The user-facing flow has one main signing action: **Sign PDF PAdES-B-LT**. B-B and B-T are internal building blocks only — they are not exposed as separate UI choices.
 
-## Mục tiêu
+The system reports:
+- `target_profile`: always PAdES-B-LT
+- `achieved_profile`: PAdES-B-LT only when timestamp + embedded validation evidence + DSS/LTV evidence are present and validated
+- `missing_requirements`: explicit list when achieved ≠ target
 
-Bản này không còn chỉ là giao diện tĩnh. Nó có backend và frontend ăn khớp theo các mode chính:
+### 2. Blind Signature Pipeline
 
-```text
-1. Pipeline Demo Mode
-   Dùng để dạy ATTT, show toàn bộ pipeline end-to-end.
+**Completely separate from PDF/PAdES document signing.** This is for privacy token signing, not PDF signing.
 
-2. User Signing Mode
-   Mô phỏng web ký số thực tế cho người dùng cuối.
-   User không phải nhìn JSON thô, private key PEM, certificate JSON, CA key.
+**Target scheme:** RFC9474-RSABSSA (RSABSSA-SHA384-PSS-Randomized)
 
-3. Certificate Lifecycle Mode
-   Demo enrollment, issue, activate, revoke, status và chain của X.509 certificate.
+- Uses a **dedicated blind-signature-only key** — no reuse with CA, TSA, OCSP, user document-signing, or PAdES keys.
+- Educational all-in-one demo is available, plus protocol-correct endpoints:
+  - `GET /api/blind-signature/signer-info` — public key data for client
+  - `POST /api/blind-signature/blind-sign` — server signs only blinded message
+  - `POST /api/blind-signature/redeem` — verify + check spent registry
+- **No Cashu compliance claim.** Cashu is mentioned only as a lifecycle reference.
+- `compliance_status = not_test_vector_verified`
+- `rfc9474_test_vectors_passed = false`
+- `production_ready = false`
 
-4. Blind Signature Mode
-   Demo chữ ký mù riêng: blind → sign blinded → unblind → verify.
-
-4. API demo mở rộng
-   Timestamp service, revocation service, key enrollment và remote signing.
-```
-
-## Kiến trúc
+## Architecture
 
 ```text
 frontend/
@@ -52,39 +51,31 @@ frontend/
 └── Blind Signature
 
 backend/
-├── PKI Service
+├── PKI Service          (RFC 5280)
 ├── Certificate Service
 ├── Signing Service
 ├── Verification Service
-├── Timestamp Service
-├── Revocation Service
+├── Timestamp Service    (RFC 3161)
+├── Revocation Service   (RFC 5280/RFC 6960 CRL+OCSP)
 ├── Key Enrollment Service
 ├── Remote Signing Service
 ├── Audit Service
-├── PAdES Adapter
-└── Blind Signature Service
+├── PAdES Adapter        (ETSI EN 319 142-1)
+└── Blind Signature Service (RFC 9474)
 ```
 
-## Cách chạy không cần Docker
+## How to Run
 
-### Yêu cầu
+### Requirements
 
-```text
-Python 3.11+
-Node.js 18 hoặc 20+
-npm
-```
+- Python 3.11+
+- Node.js 18 or 20+
 
-### 1. Chạy backend
-
-```bash
-cd securedoc_full_demo_v4
-python -m venv .venv
-```
-
-Windows PowerShell:
+### 1. Backend
 
 ```powershell
+cd securedoc_full_demo_v4
+python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 mkdir data
@@ -93,25 +84,9 @@ $env:PYTHONPATH="."
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-Linux/macOS:
+API docs: http://127.0.0.1:8000/docs
 
-```bash
-source .venv/bin/activate
-pip install -r requirements.txt
-mkdir -p data
-cd backend
-PYTHONPATH=. uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-Backend docs:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-### 2. Chạy frontend
-
-Mở terminal khác:
+### 2. Frontend
 
 ```bash
 cd frontend
@@ -119,159 +94,66 @@ npm install
 npm run dev
 ```
 
-Frontend:
+Frontend: http://localhost:5173
 
-```text
-http://localhost:5173
-```
+## CRL / OCSP / AIA Endpoints
 
-## Demo flow chính
+Certificates advertise these endpoints in their extensions:
+
+| Endpoint | Format | Media Type |
+|----------|--------|------------|
+| `GET /api/revocation/crl.der` | DER X.509 CRL | `application/pkix-crl` |
+| `GET /api/revocation/crl.pem` | PEM X.509 CRL | `application/x-pem-file` |
+| `POST /api/revocation/ocsp` | Binary OCSP (RFC 6960) | `application/ocsp-response` |
+| `GET /api/revocation/ocsp-demo` | JSON debug only | `application/json` |
+| `GET /api/certificates/demo-pki/root.der` | DER certificate | `application/pkix-cert` |
+| `GET /api/certificates/demo-pki/root.pem` | PEM certificate | `application/x-pem-file` |
+| `GET /api/certificates/demo-pki/intermediate.der` | DER certificate | `application/pkix-cert` |
+| `GET /api/certificates/demo-pki/intermediate.pem` | PEM certificate | `application/x-pem-file` |
+
+## Demo Flow
 
 ### User Signing Mode
 
-```text
-1. Load chứng thư đang active của user
+1. Load active certificate
 2. Upload PDF
-3. Prepare signing request
+3. Prepare signing request (policy-controlled digest algorithm)
 4. Confirm signing intent
-5. Ký PDF/PAdES-B-B bằng pyHanko
+5. **Sign PDF PAdES-B-LT** (single action targeting B-LT)
 6. Download signed PDF
-7. Verify signed PDF
-8. Show verification report bằng status badge
-9. Advanced details chỉ mở khi cần
-```
-
-Flow chính của User Signing Mode là **Ký PDF/PAdES**. Flow “ký payload demo” chỉ là advanced demo để thuyết trình cơ chế canonical payload, nonce và RSA-PSS.
-
-Signing history trong User Mode hiện là **in-memory demo**: backend restart sẽ mất history. Đây là giới hạn có chủ đích của Phase 1/2; Phase 6 sẽ DB hóa signing history, verification report và audit trail.
-
-### Certificate Lifecycle Mode
-
-```text
-Root CA demo
-→ Intermediate CA demo
-→ Enrollment chứa public key + proof-of-possession
-→ Issue User Signing Certificate
-→ Activate certificate
-→ Revoke/status/chain
-```
-
-Key generation khác certificate issuance:
-
-```text
-Key generation
-  = sinh key pair cho user/device/signer.
-
-Certificate issuance
-  = CA kiểm tra identity + public key + proof-of-possession,
-    rồi ký X.509 certificate bằng CA private key.
-```
-
-Demo hiện có bootstrap certificate để chạy nhanh flow ban đầu, đồng thời có lifecycle-issued certificate để minh họa enrollment/issue/activate/revoke. Production không nên để CA tự sinh private key người dùng.
-
-Certificate lifecycle hiện lưu JSON trong `data/certificates`. Đây là storage demo cho Phase 2; production cần database, RBAC cho CA Officer/Admin, audit production và CRL/OCSP thật.
-
-### Pipeline Demo Mode
-
-```text
-Init Demo PKI
-→ Create Signing Key
-→ Certificate Enrollment
-→ Issue X.509 Certificate
-→ Upload/Hash Document
-→ Prepare Canonical Payload
-→ Confirm Intent
-→ Sign
-→ Verify
-→ Timestamp
-→ Audit
-```
-
-### Timestamp / Revocation / Key Custody API
-
-```text
-POST /api/timestamp/issue
-POST /api/timestamp/verify
-GET  /api/revocation/crl
-GET  /api/revocation/status/{serial}
-POST /api/revocation/revoke/{serial}
-POST /api/key-enrollment/challenge
-POST /api/key-enrollment/submit-public-key
-POST /api/user-signing/submit-client-signature
-POST /api/remote-signing/sign
-```
-
-Timestamp hiện là signed demo TSA token bằng key riêng của TSA. Nó chưa phải RFC3161 TimeStampToken, nhưng không còn là JSON unsigned.
-
-Revocation hiện có registry local ghi `revoked_at`; verification policy phân biệt:
-
-```text
-trusted timestamp → check revocation tại signing time
-không có trusted timestamp → check revocation tại verify time
-```
-
-Key custody hiện có 2 hướng demo:
-
-```text
-Browser/local-key style: public key + proof-of-possession challenge
-Remote signing style: backend giữ demo key, kiểm tra policy + demo MFA trước khi ký
-```
-
-Frontend có tab `Security Services` để chạy nhanh các demo Phase 3-5: issue/verify timestamp, check/revoke certificate serial, key enrollment, browser payload signing và remote signing.
+7. View verification report with target/achieved profile
+8. Verify another signed PDF independently
 
 ### Blind Signature Mode
 
-```text
-Create token
-→ Blind token
-→ Blind signer signs blinded token
-→ User unblinds signature
-→ Verifier checks unblinded signature
-→ Explain unlinkability
-```
+**Protocol-correct flow:**
+1. Client gets signer info → `GET /api/blind-signature/signer-info`
+2. Client prepares/blinds token locally
+3. Server blind-signs only blinded message → `POST /api/blind-signature/blind-sign`
+4. Client unblinds/verifies locally
+5. Verifier redeems → `POST /api/blind-signature/redeem`
 
-## Phase 1/2 status
+**Educational demo:** `POST /api/blind-signature/run` runs the entire flow server-side for demonstration.
 
-```text
-Phase 1:
-- Đã ký và verify PDF/PAdES-B-B thật bằng pyHanko.
-- Đã có Download signed PDF.
-- Đã có Verify another signed PDF.
-- Đã có test reject unsigned PDF và tampered PDF.
+## Limitations
 
-Phase 2:
-- Đã có Root CA → Intermediate CA → User Signing Certificate.
-- Đã có enrollment + proof-of-possession.
-- Đã có issue/activate/revoke/status/chain.
-- Đã có lifecycle_status, revocation_status và effective_status.
-- Đã có certificate profile validation cho document signing certificate.
-```
+This is an educational demo, **not production-ready**:
 
-## Giới hạn bảo mật
+- Local demo CA — not a public trusted CA.
+- No HSM/KMS.
+- Local/demo storage (JSON files, in-memory).
+- Demo TSA using pyHanko DummyTimeStamper, not an external RFC 3161 TSA.
+- PAdES verification uses SecureDoc Demo Root CA, not a public trust anchor.
+- Legal readiness is always `false`.
+- RFC 9474 test vectors are not implemented (`compliance_status = not_test_vector_verified`).
+- Blind signature does NOT sign PDFs — it is a separate privacy token pipeline.
+- Signing history is in-memory; backend restart clears history.
+- Certificate lifecycle uses JSON in `data/certificates`.
 
-Bản này là demo học thuật, chưa phải production:
+## Digest Algorithm Policy
 
-- Chưa có HSM/KMS thật.
-- Root CA demo chạy local, production phải offline.
-- PAdES hiện là PAdES-B-B demo bằng pyHanko; chưa phải PAdES-B-T/B-LT/B-LTA.
-- Timestamp là signed demo TSA token trong payload demo, chưa phải RFC3161 TSA thật.
-- Revocation là local registry/unsigned demo CRL, chưa phải OCSP/CRL thật.
-- Signing history hiện là in-memory; restart backend sẽ mất history.
-- Certificate lifecycle hiện lưu JSON trong `data/certificates`; production cần DB, RBAC và audit production.
-- PDF/PAdES verification dùng SecureDoc Demo Root CA local, chưa phải public trusted CA.
-- Legal readiness luôn `false` trong demo.
-- User private key trong demo có thể được backend mô phỏng như remote signing service; production nên dùng browser non-extractable key, smartcard, USB token, HSM/KMS hoặc remote signing đạt chuẩn.
-
-## Vì sao không show JSON trong User Mode?
-
-User Mode mô phỏng người dùng thật. Người dùng cuối chỉ cần thấy:
-
-```text
-Tài liệu đã được ký chưa?
-Chữ ký có hợp lệ không?
-Tài liệu có bị sửa không?
-Chứng thư có tin cậy không?
-Timestamp có hợp lệ không?
-```
-
-JSON kỹ thuật được đưa vào phần `Advanced technical details`, không hiển thị mặc định.
+The `AlgorithmPolicy` controls which digest algorithm is used:
+- Supported: SHA-256, SHA-384, SHA-512
+- Rejected: MD5, SHA-1
+- Default: SHA-256
+- Changing `AlgorithmPolicy.default_digest` keeps prepare/verify hash behavior consistent.

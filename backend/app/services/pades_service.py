@@ -170,20 +170,110 @@ def collect_validation_info(signer_cert_path: str | Path) -> tuple[ValidationCon
     return validation_context, report
 
 
+def _inspect_dss(pdf_path: str | Path) -> Dict:
+    """Inspect the PDF DSS dictionary using pyHanko for actual contents."""
+    result = {
+        "dss_present": False,
+        "embedded_cert_count": 0,
+        "embedded_crl_count": 0,
+        "embedded_ocsp_count": 0,
+        "has_embedded_cert_chain": False,
+        "has_embedded_crl_or_ocsp": False,
+    }
+    try:
+        with Path(pdf_path).open("rb") as f:
+            reader = PdfFileReader(f)
+            root = reader.root
+            dss_ref = root.raw_get("/DSS", None) if hasattr(root, "raw_get") else root.get("/DSS")
+            if dss_ref is None:
+                return result
+            result["dss_present"] = True
+            from pyhanko.pdf_utils import generic
+            dss = dss_ref.get_object() if hasattr(dss_ref, "get_object") else dss_ref
+            if hasattr(dss, "raw_get"):
+                certs = dss.raw_get("/Certs", None)
+                crls = dss.raw_get("/CRLs", None)
+                ocsps = dss.raw_get("/OCSPs", None)
+            else:
+                certs = dss.get("/Certs")
+                crls = dss.get("/CRLs")
+                ocsps = dss.get("/OCSPs")
+            if certs is not None:
+                certs_obj = certs.get_object() if hasattr(certs, "get_object") else certs
+                if hasattr(certs_obj, "__len__"):
+                    result["embedded_cert_count"] = len(certs_obj)
+            if crls is not None:
+                crls_obj = crls.get_object() if hasattr(crls, "get_object") else crls
+                if hasattr(crls_obj, "__len__"):
+                    result["embedded_crl_count"] = len(crls_obj)
+            if ocsps is not None:
+                ocsps_obj = ocsps.get_object() if hasattr(ocsps, "get_object") else ocsps
+                if hasattr(ocsps_obj, "__len__"):
+                    result["embedded_ocsp_count"] = len(ocsps_obj)
+            result["has_embedded_cert_chain"] = result["embedded_cert_count"] >= 2
+            result["has_embedded_crl_or_ocsp"] = (
+                result["embedded_crl_count"] > 0 or result["embedded_ocsp_count"] > 0
+            )
+    except Exception:
+        pass
+    return result
+
+
 def embed_ltv_info(pdf_path: str | Path, requested: bool) -> Dict:
-    has_dss = _pdf_contains_name(pdf_path, b"/DSS")
+    dss = _inspect_dss(pdf_path)
+    has_real_evidence = dss["dss_present"] and dss["has_embedded_crl_or_ocsp"]
     return {
-        "state": "embedded" if requested and has_dss else "missing",
+        "state": "embedded" if requested and has_real_evidence else "missing",
         "standard": PADES_STANDARD,
-        "dss_present": has_dss,
+        "dss_present": dss["dss_present"],
+        "dss_detail": dss,
     }
 
 
-def _pdf_contains_name(pdf_path: str | Path, name: bytes) -> bool:
+def validate_pades_blt_requirements(pdf_path: str | Path) -> Dict:
+    """Return a structured B-LT validation report for the given signed PDF."""
+    pdf_path = Path(pdf_path)
+    report = {
+        "has_embedded_signature": False,
+        "has_signature_timestamp": False,
+        "timestamp_valid": False,
+        "has_dss": False,
+        "has_embedded_cert_chain": False,
+        "has_embedded_crl_or_ocsp": False,
+        "revocation_evidence_valid": False,
+        "signing_cert_good_at_signing_time": None,
+        "chain_valid_against_demo_root": False,
+        "target_profile": TARGET_PADES_PROFILE,
+        "achieved_profile": "PAdES-B-B",
+        "missing_requirements": [],
+    }
     try:
-        return name in Path(pdf_path).read_bytes()
-    except OSError:
-        return False
+        verify_result = verify_pdf_signature(pdf_path)
+    except Exception:
+        report["missing_requirements"] = ["valid PDF signature"]
+        return report
+
+    adv = verify_result.get("advanced", {})
+    vg = adv.get("verification_groups", {})
+
+    report["has_embedded_signature"] = bool(vg.get("document_integrity", {}).get("signature_present"))
+    ts = vg.get("timestamp", {})
+    report["has_signature_timestamp"] = bool(ts.get("present"))
+    report["timestamp_valid"] = bool(ts.get("valid"))
+    report["chain_valid_against_demo_root"] = bool(vg.get("chain_validation", {}).get("chain_valid"))
+
+    dss_info = _inspect_dss(pdf_path)
+    report["has_dss"] = dss_info["dss_present"]
+    report["has_embedded_cert_chain"] = dss_info["has_embedded_cert_chain"]
+    report["has_embedded_crl_or_ocsp"] = dss_info["has_embedded_crl_or_ocsp"]
+    report["revocation_evidence_valid"] = dss_info["has_embedded_crl_or_ocsp"]
+
+    signer_cert_info = vg.get("signer_certificate", {})
+    report["signing_cert_good_at_signing_time"] = signer_cert_info.get("valid_at_signing_time")
+
+    report["achieved_profile"] = adv.get("achieved_profile", "PAdES-B-B")
+    report["missing_requirements"] = adv.get("missing_requirements", [])
+    return report
 
 
 def _missing_requirements(timestamp_status: Dict, revocation_status: Dict, ltv_status: Dict) -> list[str]:

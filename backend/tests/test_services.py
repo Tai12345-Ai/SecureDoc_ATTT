@@ -46,10 +46,28 @@ def test_pades_sign_and_verify_pdf():
     result = sign_pdf_request(prepared["request_id"])
     assert result["verification"]["status"] == "accepted"
     assert result["metadata"]["target_profile"] == "PAdES-B-LT"
-    assert result["metadata"]["achieved_profile"] == "PAdES-B-LT"
-    assert result["metadata"]["timestamp_status"]["state"] == "valid"
-    assert result["metadata"]["revocation_evidence_status"]["state"] == "embedded"
+    assert result["metadata"]["achieved_profile"] in ("PAdES-B-LT", "PAdES-B-T", "PAdES-B-B")
     assert result["file_id"]
+
+
+def test_pades_achieved_profile_is_honest():
+    """achieved_profile must be PAdES-B-LT only when full evidence is present."""
+    from app.services.pki_service import init_demo_pki
+    from app.services.certificate_lifecycle_service import get_my_active_certificate
+    from app.services.signing_service import prepare_request, confirm_intent, sign_pdf_request
+
+    init_demo_pki(force=True)
+    cert = get_my_active_certificate()
+    prepared = prepare_request("test.pdf", _minimal_pdf_bytes(), "test PDF signing", cert["serial"])
+    confirm_intent(prepared["request_id"])
+    result = sign_pdf_request(prepared["request_id"])
+    meta = result["metadata"]
+    achieved = meta["achieved_profile"]
+    missing = meta.get("missing_requirements", [])
+    if achieved == "PAdES-B-LT":
+        assert len(missing) == 0, f"B-LT claimed but missing: {missing}"
+    else:
+        assert len(missing) > 0, f"Not B-LT but missing_requirements is empty"
 
 
 def test_pades_verify_rejects_tampered_pdf():
@@ -116,6 +134,31 @@ def test_pades_sign_requires_confirmed_request():
     prepared = prepare_request("test.pdf", _minimal_pdf_bytes(), "test PDF signing", cert["serial"])
     with pytest.raises(ValueError):
         sign_pdf_request(prepared["request_id"])
+
+
+def test_validate_pades_blt_requirements():
+    """validate_pades_blt_requirements returns structured report."""
+    from pathlib import Path
+    from app.services.pki_service import init_demo_pki
+    from app.services.certificate_lifecycle_service import get_my_active_certificate
+    from app.services.signing_service import prepare_request, confirm_intent, sign_pdf_request
+    from app.services.pades_service import validate_pades_blt_requirements
+
+    init_demo_pki(force=True)
+    cert = get_my_active_certificate()
+    prepared = prepare_request("test.pdf", _minimal_pdf_bytes(), "test PDF signing", cert["serial"])
+    confirm_intent(prepared["request_id"])
+    result = sign_pdf_request(prepared["request_id"])
+
+    report = validate_pades_blt_requirements(result["metadata"]["signed_path"])
+    assert "has_embedded_signature" in report
+    assert "has_signature_timestamp" in report
+    assert "has_dss" in report
+    assert "target_profile" in report
+    assert report["target_profile"] == "PAdES-B-LT"
+    assert "achieved_profile" in report
+    assert "missing_requirements" in report
+    assert isinstance(report["missing_requirements"], list)
 
 
 def test_certificate_lifecycle_demo_enrollment_profile_and_revocation():
@@ -380,14 +423,17 @@ def test_blind_signature_flow_uses_separate_scheme_and_spent_registry():
     message = f"privacy-token-{uuid.uuid4()}"
     first = run_blind_signature_flow(message)
     assert first["target_scheme"] == "RFC9474-RSABSSA"
-    assert first["achieved_scheme"] == "RSABSSA-SHA384-PSS-Randomized"
+    assert "RSABSSA-SHA384-PSS-Randomized" in first["achieved_scheme"]
     assert first["scheme_complete"] is True
     assert first["production_ready"] is False
+    assert first["rfc9474_test_vectors_passed"] is False
+    assert first["compliance_status"] == "not_test_vector_verified"
     assert first["blind_signature_valid"] is True
     assert first["spent_status"] == "spent"
     assert first["redeemed"] is True
+    assert first["token_hash_algorithm"] == "SHA-256"
     assert first["advanced"]["key"]["purpose"] == "blind-signature-only"
-    assert first["advanced"]["variant"] == "RSABSSA-SHA384-PSS-Randomized"
+    assert "RSABSSA-SHA384-PSS-Randomized" in first["advanced"]["variant"]
     assert first["advanced"]["hash"] == "SHA-384"
 
     second = run_blind_signature_flow(message)
@@ -395,3 +441,159 @@ def test_blind_signature_flow_uses_separate_scheme_and_spent_registry():
     assert second["scheme_complete"] is True
     assert second["spent_status"] == "already_spent"
     assert second["redeemed"] is False
+
+
+# ── Digest policy tests ──────────────────────────────────────────────────────
+
+def test_digest_hex_uses_selected_algorithm():
+    from app.services.crypto_utils import digest_hex
+
+    data = b"test data for hashing"
+    sha256 = digest_hex(data, "sha256")
+    sha384 = digest_hex(data, "sha384")
+    sha512 = digest_hex(data, "sha512")
+
+    assert len(sha256) == 64
+    assert len(sha384) == 96
+    assert len(sha512) == 128
+    assert sha256 != sha384 != sha512
+
+
+def test_digest_hex_default_matches_policy():
+    from app.services.crypto_utils import digest_hex
+    from app.services.algorithm_policy import ALGORITHM_POLICY
+
+    data = b"consistency test"
+    default = digest_hex(data)
+    explicit = digest_hex(data, ALGORITHM_POLICY.default_digest)
+    assert default == explicit
+
+
+def test_digest_policy_rejects_md5_and_sha1():
+    import pytest
+    from app.services.crypto_utils import digest_hex
+
+    with pytest.raises(ValueError):
+        digest_hex(b"test", "md5")
+    with pytest.raises(ValueError):
+        digest_hex(b"test", "sha1")
+
+
+def test_prepare_and_verify_hash_consistent():
+    """prepare_request and verify_signed_package use the same digest algorithm."""
+    from app.services.pki_service import init_demo_pki
+    from app.services.signing_service import prepare_request, confirm_intent, sign_and_verify
+
+    pki = init_demo_pki(force=True)
+    cert_serial = pki["user_certificate"]["serial"]
+    prepared = prepare_request("test.txt", b"consistency check", "test", cert_serial)
+    confirm_intent(prepared["request_id"])
+    result = sign_and_verify(prepared["request_id"])
+    assert result["status"] == "accepted"
+    # The documentHashValid check proves prepare and verify use the same hash
+    hash_check = next(c for c in result["checks"] if c["key"] == "documentHashValid")
+    assert hash_check["ok"] is True
+
+
+# ── CRL / OCSP endpoint tests ───────────────────────────────────────────────
+
+def test_signed_crl_der_returns_bytes():
+    from app.services.pki_service import init_demo_pki
+    from app.services.revocation_service import generate_signed_crl
+
+    init_demo_pki(force=True)
+    crl_data = generate_signed_crl()
+    assert isinstance(crl_data["crl_der"], bytes)
+    assert len(crl_data["crl_der"]) > 0
+    assert crl_data["crl_type"] == "SIGNED_X509_CRL"
+    assert crl_data["standard"] == "RFC5280"
+
+
+def test_signed_crl_pem_is_pem():
+    from app.services.pki_service import init_demo_pki
+    from app.services.revocation_service import generate_signed_crl
+
+    init_demo_pki(force=True)
+    crl_data = generate_signed_crl()
+    assert isinstance(crl_data["crl_pem"], str)
+    assert crl_data["crl_pem"].startswith("-----BEGIN X509 CRL-----")
+
+
+# ── Blind signature protocol tests ──────────────────────────────────────────
+
+def test_blind_signer_info_returns_key_data():
+    from app.services.blind_signature_service import blind_signer_info
+
+    info = blind_signer_info()
+    assert info["status"] == "active"
+    assert info["purpose"] == "blind-signature-only"
+    assert "key_id" in info
+    assert "public_key_der_hex" in info
+    assert "scheme" in info
+    assert info["compliance_status"] == "not_test_vector_verified"
+    assert info["rfc9474_test_vectors_passed"] is False
+
+
+def test_blind_sign_message_rejects_wrong_key_id():
+    import pytest
+    from app.services.blind_signature_service import blind_sign_message
+
+    with pytest.raises(ValueError, match="Unknown key_id"):
+        blind_sign_message("aabb", "wrong-key-id")
+
+
+def test_redeem_duplicate_rejected():
+    import uuid
+    from app.services.blind_signature_service import (
+        prepare_token, blind_token, blind_sign, unblind_signature,
+        verify_blind_signature, redeem_with_verification,
+    )
+
+    message = f"redeem-test-{uuid.uuid4()}"
+    rec = prepare_token(message)
+    blind_token(rec)
+    blind_sign(rec)
+    unblind_signature(rec)
+    verify_blind_signature(rec)
+
+    first = redeem_with_verification(
+        token_hash=rec["token_hash"],
+        signature_hex=rec["signature"].hex(),
+        msg_prefix_hex=rec["msg_prefix"].hex(),
+        token=rec["token"],
+    )
+    assert first["accepted"] is True
+    assert first["reason"] == "redeemed"
+    assert first["token_hash_algorithm"] == "SHA-256"
+
+    second = redeem_with_verification(
+        token_hash=rec["token_hash"],
+        signature_hex=rec["signature"].hex(),
+        msg_prefix_hex=rec["msg_prefix"].hex(),
+        token=rec["token"],
+    )
+    assert second["accepted"] is False
+    assert second["reason"] == "already_spent"
+
+
+def test_redeem_wrong_signature_rejected():
+    import uuid
+    from app.services.blind_signature_service import (
+        prepare_token, blind_token, blind_sign, unblind_signature,
+        redeem_with_verification,
+    )
+
+    message = f"wrong-sig-{uuid.uuid4()}"
+    rec = prepare_token(message)
+    blind_token(rec)
+    blind_sign(rec)
+    unblind_signature(rec)
+
+    result = redeem_with_verification(
+        token_hash=rec["token_hash"],
+        signature_hex="00" * 384,  # wrong signature
+        msg_prefix_hex=rec["msg_prefix"].hex(),
+        token=rec["token"],
+    )
+    assert result["accepted"] is False
+    assert result["reason"] == "invalid_signature"

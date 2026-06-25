@@ -183,13 +183,16 @@ def _legacy_run_blind_signature_flow(message: str) -> dict:
 
 TARGET_SCHEME = "RFC9474-RSABSSA"
 RSABSSA_VARIANT = "RSABSSA-SHA384-PSS-Randomized"
-ACHIEVED_SCHEME = RSABSSA_VARIANT
+ACHIEVED_SCHEME = f"{RSABSSA_VARIANT} demo implementation"
 HASH_NAME = "SHA-384"
 PSS_SALT_LENGTH = 48
 PREPARE_RANDOM_PREFIX_LENGTH = 32
 MAX_BLINDING_RETRIES = 32
 BLIND_KEY_PATH = settings.blind_signature_dir / "blind_signer_key.pem"
 SPENT_TOKENS_FILE = settings.blind_signature_dir / "spent_tokens.json"
+TOKEN_HASH_ALGORITHM = "SHA-256"
+RFC9474_TEST_VECTORS_PASSED = False
+COMPLIANCE_STATUS = "not_test_vector_verified"
 
 
 def _now() -> str:
@@ -343,9 +346,13 @@ def blind_signer_info() -> Dict:
         "public_key_algorithm": "RSA",
         "public_key_size": public_key.size_in_bits(),
         "public_exponent": public_key.e,
+        "public_key_der_hex": public_der.hex(),
+        "scheme": RSABSSA_VARIANT,
         "status": "active",
         "purpose": "blind-signature-only",
         "separation": "Not reused for CA, TSA, OCSP, PAdES or document signing.",
+        "compliance_status": COMPLIANCE_STATUS,
+        "rfc9474_test_vectors_passed": RFC9474_TEST_VECTORS_PASSED,
     }
 
 
@@ -512,7 +519,73 @@ def redeem_token(token_record: Dict) -> Dict:
     return token_record
 
 
+def blind_sign_message(blinded_msg_hex: str, key_id: str) -> Dict:
+    """Server-only blind-sign: receives only the blinded message, never the original token."""
+    info = blind_signer_info()
+    if key_id != info["key_id"]:
+        raise ValueError(f"Unknown key_id: {key_id}")
+
+    key = _blind_signer_key()
+    modulus_len = _rsa_modulus_len(key.publickey())
+    blinded_msg = bytes.fromhex(blinded_msg_hex)
+    blinded_representative = _os2ip(blinded_msg)
+    if not 0 <= blinded_representative < key.n:
+        raise ValueError("message representative out of range")
+
+    signed_representative = pow(blinded_representative, key.d, key.n)
+    if pow(signed_representative, key.e, key.n) != blinded_representative:
+        raise ValueError("signing failure")
+
+    blind_sig = _i2osp(signed_representative, modulus_len)
+    return {
+        "blind_sig": blind_sig.hex(),
+        "key_id": info["key_id"],
+        "achieved_scheme": ACHIEVED_SCHEME,
+    }
+
+
+def redeem_with_verification(
+    token_hash: str,
+    signature_hex: str,
+    msg_prefix_hex: str,
+    token: str,
+) -> Dict:
+    """Verify signature then redeem: check spent registry, mark spent, reject duplicates."""
+    public_key = _blind_signer_key().publickey()
+    token_bytes = token.encode("utf-8")
+    msg_prefix = bytes.fromhex(msg_prefix_hex)
+    input_msg = msg_prefix + token_bytes
+    signature = bytes.fromhex(signature_hex)
+
+    valid = _rsa_pss_verify(public_key, input_msg, signature)
+    if not valid:
+        return {
+            "accepted": False,
+            "reason": "invalid_signature",
+            "token_hash": token_hash,
+            "token_hash_algorithm": TOKEN_HASH_ALGORITHM,
+        }
+
+    if _is_spent(token_hash):
+        return {
+            "accepted": False,
+            "reason": "already_spent",
+            "token_hash": token_hash,
+            "token_hash_algorithm": TOKEN_HASH_ALGORITHM,
+        }
+
+    spent_record = _mark_spent(token_hash, "redeem_" + secrets.token_hex(8))
+    return {
+        "accepted": True,
+        "reason": "redeemed",
+        "token_hash": token_hash,
+        "token_hash_algorithm": TOKEN_HASH_ALGORITHM,
+        "spent_record": spent_record,
+    }
+
+
 def run_blind_signature_flow(message: str) -> dict:
+    """Educational all-in-one demo: the server sees the original token. Not the real privacy architecture."""
     token_record = prepare_token(message)
     blind_token(token_record)
     blind_sign(token_record)
@@ -523,6 +596,7 @@ def run_blind_signature_flow(message: str) -> dict:
     key_info = blind_signer_info()
     verified = bool(token_record["blind_signature_valid"])
     warnings = [
+        "This is an educational all-in-one demo where the server sees the original token. In a real protocol the server only sees the blinded message.",
         "RFC9474 RSABSSA scheme is implemented for the demo key path, but production deployment still needs HSM-backed keys and operational hardening.",
         "Spent-token registry is demo JSON storage, not production-grade double-spend prevention.",
         "Cashu is only a lifecycle reference here; this flow does not claim Cashu protocol compliance.",
@@ -535,11 +609,15 @@ def run_blind_signature_flow(message: str) -> dict:
         "achieved_scheme": ACHIEVED_SCHEME,
         "scheme_complete": verified,
         "production_ready": False,
+        "rfc9474_test_vectors_passed": RFC9474_TEST_VECTORS_PASSED,
+        "compliance_status": COMPLIANCE_STATUS,
+        "compliance_note": "RFC9474 test vectors are not implemented; this is a demo implementation only.",
         "blind_signature_valid": verified,
         "verified": verified,
         "key_id": key_info["key_id"],
         "key_version": key_info["key_version"],
         "token_hash": token_record["token_hash"],
+        "token_hash_algorithm": TOKEN_HASH_ALGORITHM,
         "spent_status": token_record["spent_status"],
         "redeemed": token_record["redeemed"],
         "warnings": warnings,
@@ -603,6 +681,8 @@ def run_blind_signature_flow(message: str) -> dict:
             "signature_hex": token_record["signature"].hex(),
             "pss_retry_count": token_record["pss_retry_count"],
             "spent_record": token_record.get("spent_record"),
+            "rfc9474_test_vectors_passed": RFC9474_TEST_VECTORS_PASSED,
+            "compliance_status": COMPLIANCE_STATUS,
             "standards": {
                 "target": "RFC 9474 / RSABSSA",
                 "variant": RSABSSA_VARIANT,

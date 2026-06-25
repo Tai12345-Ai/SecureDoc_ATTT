@@ -1,7 +1,13 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
+from cryptography.hazmat.primitives import serialization
 
 from app.domain.schemas import CertificateEnrollmentRequest
-from app.services.pki_service import init_demo_pki, describe_demo_pki
+from app.services.pki_service import (
+    init_demo_pki,
+    describe_demo_pki,
+    get_root_certificate,
+    get_intermediate_certificate,
+)
 from app.services.certificate_lifecycle_service import (
     activate_certificate,
     create_demo_backend_enrollment,
@@ -16,6 +22,48 @@ from app.services.certificate_lifecycle_service import (
 )
 
 router = APIRouter()
+
+
+# ── Demo PKI certificate download endpoints (AIA / manual inspection) ──────
+
+@router.get("/demo-pki/root.der")
+def get_root_cert_der():
+    """DER-encoded Root CA certificate."""
+    cert = get_root_certificate()
+    return Response(
+        content=cert.public_bytes(serialization.Encoding.DER),
+        media_type="application/pkix-cert",
+    )
+
+
+@router.get("/demo-pki/root.pem")
+def get_root_cert_pem():
+    """PEM-encoded Root CA certificate."""
+    cert = get_root_certificate()
+    return Response(
+        content=cert.public_bytes(serialization.Encoding.PEM),
+        media_type="application/x-pem-file",
+    )
+
+
+@router.get("/demo-pki/intermediate.der")
+def get_intermediate_cert_der():
+    """DER-encoded Intermediate CA certificate."""
+    cert = get_intermediate_certificate()
+    return Response(
+        content=cert.public_bytes(serialization.Encoding.DER),
+        media_type="application/pkix-cert",
+    )
+
+
+@router.get("/demo-pki/intermediate.pem")
+def get_intermediate_cert_pem():
+    """PEM-encoded Intermediate CA certificate."""
+    cert = get_intermediate_certificate()
+    return Response(
+        content=cert.public_bytes(serialization.Encoding.PEM),
+        media_type="application/x-pem-file",
+    )
 
 @router.post("/init-demo-pki")
 def init_pki(force: bool = False):

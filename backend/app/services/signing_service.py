@@ -28,7 +28,7 @@ from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.exceptions import InvalidSignature
 
 from app.core.config import settings
-from app.services.crypto_utils import sha256_bytes, canonical_json_bytes, b64e, b64d
+from app.services.crypto_utils import sha256_bytes, digest_hex, canonical_json_bytes, b64e, b64d
 from app.services.pki_service import get_user_certificate, get_user_private_key, verify_chain
 from app.services.revocation_service import status as revocation_status, status_at as revocation_status_at
 from app.services.timestamp_service import issue_demo_timestamp, verify_demo_timestamp
@@ -73,7 +73,7 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
     request_id = "req_" + secrets.token_hex(12)
     safe_document_name = _safe_filename(document_name)
     digest_algorithm = ALGORITHM_POLICY.display_digest()
-    document_hash = sha256_bytes(document_bytes)
+    document_hash = digest_hex(document_bytes)
     nonce = secrets.token_hex(16)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -379,7 +379,7 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     except InvalidSignature:
         add("cryptoValid", "Chữ ký mật mã hợp lệ", False, "Không xác minh được chữ ký.")
 
-    actual_document_hash = sha256_bytes(Path(record["document_path"]).read_bytes())
+    actual_document_hash = digest_hex(Path(record["document_path"]).read_bytes(), package.get("digestAlgorithm"))
     add(
         "documentHashValid",
         "Tài liệu chưa bị sửa",

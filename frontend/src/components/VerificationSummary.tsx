@@ -31,15 +31,15 @@ export function VerificationSummary({ report, title = "PDF verification report" 
         <p><span>Kết quả</span><strong>{report.accepted ? "Chữ ký hợp lệ" : "Không hợp lệ"}</strong></p>
         <p><span>Target profile</span><strong>{details.target_profile || "PAdES-B-LT"}</strong></p>
         <p><span>Achieved profile</span><strong>{details.achieved_profile || details.pades_profile || "Không xác định"}</strong></p>
+        {details.missing_requirements?.length > 0 && (
+          <p><span>Missing for target</span><strong>{details.missing_requirements.join(", ")}</strong></p>
+        )}
         <p><span>Checks passed</span><strong>{passed}/{total}</strong></p>
         <p><span>Digest</span><strong>{details.digest_algorithm || "SHA-256"}</strong></p>
         <p><span>Signature algorithm</span><strong>{details.signature_algorithm || "RSA-PSS"}</strong></p>
-        <p><span>Signer</span><strong>{details.signer_subject || "Không xác định"}</strong></p>
-        <p><span>Issuer</span><strong>{details.signer_issuer || "Không xác định"}</strong></p>
         <p><span>Timestamp</span><strong>{timestamp.state || "missing"}</strong></p>
         <p><span>Revocation evidence</span><strong>{revocation.state || "missing"}</strong></p>
         <p><span>Certificate chain</span><strong>{details.certificate_chain_status || "Không xác định"}</strong></p>
-        <p><span>Serial chứng thư</span><strong>{details.signer_serial || "Không xác định"}</strong></p>
       </div>
 
       <div className="checks">
