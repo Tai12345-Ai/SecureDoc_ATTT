@@ -108,7 +108,7 @@ export function CertificateLifecyclePage() {
             <p><span>Origin</span><strong>{status.certificate_origin}</strong></p>
             <p><span>X.509 profile</span><strong>{status.profile_validation?.valid ? "valid" : "invalid"}</strong></p>
           </div>
-          <p className="hint">Key custody mode: DEMO_BACKEND_KEY can use the demo backend key for PDF signing; CLIENT_SIDE_KEY cannot be used by backend PAdES signing; REMOTE_HSM_KEY requires a remote signing service/HSM.</p>
+          <p className="hint">Key custody mode: DEMO_BACKEND_KEY can use the demo backend key for PDF signing; CLIENT_SIDE_KEY cannot be used by the backend PAdES signer but can use the browser/external pre-sign/finalize flow; REMOTE_HSM_KEY requires a remote signing service/HSM.</p>
           <p className="hint">{status.warning}</p>
           {status.profile_validation?.checks && (
             <div className="checks">

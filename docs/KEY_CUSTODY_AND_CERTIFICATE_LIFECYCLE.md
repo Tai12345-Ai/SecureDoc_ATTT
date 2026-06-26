@@ -19,13 +19,23 @@ three explicit modes.
 - The private key stays outside the backend.
 - The backend receives only the public key and a proof-of-possession signature.
 - The CA issues an X.509 certificate for that submitted public key.
+- The proof-of-possession challenge is single-use, expires after 5 minutes, and
+  locks after repeated failed proof attempts in the demo JSON store.
+- Issuing the same enrollment again returns the existing certificate record
+  instead of minting another certificate.
 - The matching certificate records have:
   - `key_source = CLIENT_SIDE_KEY`
   - `private_key_custody = USER_BROWSER_OR_DEVICE`
   - `backend_has_private_key = false`
 - Backend PDF/PAdES signing is rejected for this certificate mode because the
-  backend does not have the private key. The canonical payload client-side
-  signing demo can verify signatures with the certificate public key.
+  backend does not have the private key.
+- Client-side PDF/PAdES signing is supported through a demo pre-sign/finalize
+  flow: the backend prepares the PDF ByteRange and CMS signed attributes, the
+  browser or external client signs those exact attributes, and the backend
+  verifies the raw signature with the certificate public key before finalizing
+  the CMS/PDF container.
+- The canonical payload client-side signing demo also verifies signatures with
+  the certificate public key.
 
 ## REMOTE_HSM_KEY
 
@@ -50,7 +60,9 @@ break non-repudiation assumptions.
 
 ## Current Limitation
 
-Full client-side PAdES signing is not implemented yet. It requires a PDF
-pre-sign/finalize workflow with ByteRange calculation and a CMS signature
-container. SecureDoc currently keeps this as future work and supports
-client-side signing only for the canonical payload demo.
+The client-side PAdES path is still demo-grade, not production/legal-ready. Its
+pre-sign state is kept in backend memory for a short TTL and is single-use, so a
+backend restart clears pending operations. Production would need authenticated
+sessions, durable transaction state, rate limiting, audit hardening, HSM/token
+or qualified remote-signing integration, trusted CA/TSA/OCSP/CRL operations, and
+legal policy controls.

@@ -329,6 +329,120 @@ def test_key_enrollment_rejects_wrong_proof():
         )
 
 
+def test_key_enrollment_challenge_replay_rejected():
+    import base64
+    import pytest
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.pki_service import init_demo_pki, get_demo_user_public_key_pem, get_user_private_key
+    from app.services.proof_of_possession_service import create_key_enrollment_challenge, submit_public_key_proof
+
+    init_demo_pki(force=True)
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Demo Signer",
+        email="alice@example.com",
+        public_key_pem=get_demo_user_public_key_pem(),
+    )
+    signature = get_user_private_key().sign(
+        challenge["challenge"].encode("utf-8"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    signature_b64 = base64.b64encode(signature).decode("ascii")
+
+    first = submit_public_key_proof(
+        challenge_id=challenge["challenge_id"],
+        proof_signature_base64=signature_b64,
+        issue_certificate=False,
+    )
+    assert first["enrollment"]["proof_verified"] is True
+
+    with pytest.raises(ValueError, match="used"):
+        submit_public_key_proof(
+            challenge_id=challenge["challenge_id"],
+            proof_signature_base64=signature_b64,
+            issue_certificate=False,
+        )
+
+
+def test_key_enrollment_expired_challenge_rejected():
+    import base64
+    import json
+    import pytest
+    from datetime import datetime, timedelta, timezone
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.pki_service import init_demo_pki, get_demo_user_public_key_pem, get_user_private_key
+    from app.services.proof_of_possession_service import (
+        CHALLENGES_FILE,
+        create_key_enrollment_challenge,
+        submit_public_key_proof,
+    )
+
+    init_demo_pki(force=True)
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Demo Signer",
+        email="alice@example.com",
+        public_key_pem=get_demo_user_public_key_pem(),
+    )
+    records = json.loads(CHALLENGES_FILE.read_text(encoding="utf-8"))
+    for record in records:
+        if record["challenge_id"] == challenge["challenge_id"]:
+            record["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    CHALLENGES_FILE.write_text(json.dumps(records, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    signature = get_user_private_key().sign(
+        challenge["challenge"].encode("utf-8"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+
+    with pytest.raises(ValueError, match="expired"):
+        submit_public_key_proof(
+            challenge_id=challenge["challenge_id"],
+            proof_signature_base64=base64.b64encode(signature).decode("ascii"),
+            issue_certificate=False,
+        )
+
+    updated = json.loads(CHALLENGES_FILE.read_text(encoding="utf-8"))
+    expired = next(record for record in updated if record["challenge_id"] == challenge["challenge_id"])
+    assert expired["status"] == "expired"
+
+
+def test_issue_enrollment_is_idempotent_after_issued():
+    import base64
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.certificate_lifecycle_service import issue_enrollment, list_certificates
+    from app.services.pki_service import init_demo_pki, get_demo_user_public_key_pem, get_user_private_key
+    from app.services.proof_of_possession_service import create_key_enrollment_challenge, submit_public_key_proof
+
+    init_demo_pki(force=True)
+    challenge = create_key_enrollment_challenge(
+        display_name="Alice Demo Signer",
+        email="alice@example.com",
+        public_key_pem=get_demo_user_public_key_pem(),
+    )
+    signature = get_user_private_key().sign(
+        challenge["challenge"].encode("utf-8"),
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    enrollment_result = submit_public_key_proof(
+        challenge_id=challenge["challenge_id"],
+        proof_signature_base64=base64.b64encode(signature).decode("ascii"),
+        issue_certificate=False,
+    )
+    enrollment_id = enrollment_result["enrollment"]["enrollment_id"]
+
+    first = issue_enrollment(enrollment_id, activate=False)
+    second = issue_enrollment(enrollment_id, activate=False)
+
+    assert second["serial"] == first["serial"]
+    records = [record for record in list_certificates() if record.get("enrollment_id") == enrollment_id]
+    assert len(records) == 1
+
+
 def _issue_client_side_certificate_with_key(activate: bool = True):
     import base64
     from cryptography.hazmat.primitives import hashes, serialization
@@ -497,6 +611,114 @@ def test_submit_client_signature_reports_client_side_custody():
     assert result["backendHasPrivateKey"] is False
     assert result["signatureOrigin"] == "browser_or_external_client"
     assert result["advanced"]["signed_package"]["keyCustody"] == "CLIENT_SIDE_KEY"
+
+
+def _sign_client_pades_presign(client_key, presign: dict) -> str:
+    import base64
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from app.services.crypto_utils import b64d
+    from app.services.algorithm_policy import ALGORITHM_POLICY
+
+    signed_attrs = b64d(presign["signed_attributes_base64"])
+    hash_algorithm = presign["digest_algorithm_normalized"]
+    signature = client_key.sign(
+        signed_attrs,
+        padding.PSS(
+            mgf=padding.MGF1(ALGORITHM_POLICY.cryptography_hash(hash_algorithm)),
+            salt_length=presign["rsa_pss_salt_length"],
+        ),
+        ALGORITHM_POLICY.cryptography_hash(hash_algorithm),
+    )
+    return base64.b64encode(signature).decode("ascii")
+
+
+def test_client_side_pades_prepare_and_finalize():
+    from app.services.signing_service import (
+        confirm_intent,
+        finalize_client_pdf_signature,
+        prepare_client_pdf_signature,
+        prepare_request,
+    )
+
+    client_key, cert_record, _enrollment = _issue_client_side_certificate_with_key(activate=True)
+    prepared = prepare_request(
+        "client-side.pdf",
+        _minimal_pdf_bytes(),
+        "client-side PAdES signing",
+        cert_record["serial"],
+    )
+    confirm_intent(prepared["request_id"])
+
+    presign = prepare_client_pdf_signature(prepared["request_id"])
+    assert presign["expires_at"]
+    result = finalize_client_pdf_signature(
+        prepared["request_id"],
+        _sign_client_pades_presign(client_key, presign),
+    )
+    assert result["file_id"]
+    assert result["client_side_pades"]["keyCustody"] == "CLIENT_SIDE_KEY"
+    assert result["client_side_pades"]["backendHasPrivateKey"] is False
+    assert result["client_side_pades"]["signatureOrigin"] == "browser_or_external_client"
+    assert result["verification"]["status"] == "accepted"
+
+
+def test_client_side_pades_presign_is_single_use_after_finalize():
+    import pytest
+    from app.services.signing_service import (
+        confirm_intent,
+        finalize_client_pdf_signature,
+        prepare_client_pdf_signature,
+        prepare_request,
+    )
+
+    client_key, cert_record, _enrollment = _issue_client_side_certificate_with_key(activate=True)
+    prepared = prepare_request(
+        "client-side-single-use.pdf",
+        _minimal_pdf_bytes(),
+        "client-side PAdES signing",
+        cert_record["serial"],
+    )
+    confirm_intent(prepared["request_id"])
+
+    presign = prepare_client_pdf_signature(prepared["request_id"])
+    signature_b64 = _sign_client_pades_presign(client_key, presign)
+    result = finalize_client_pdf_signature(prepared["request_id"], signature_b64)
+    assert result["verification"]["status"] == "accepted"
+
+    with pytest.raises(ValueError, match="already been signed"):
+        finalize_client_pdf_signature(prepared["request_id"], signature_b64)
+
+
+def test_client_side_pades_presign_expires():
+    import base64
+    import pytest
+    from datetime import datetime, timedelta, timezone
+    from app.services.signing_service import (
+        _CLIENT_PDF_PRESIGNS,
+        confirm_intent,
+        finalize_client_pdf_signature,
+        prepare_client_pdf_signature,
+        prepare_request,
+    )
+
+    _client_key, cert_record, _enrollment = _issue_client_side_certificate_with_key(activate=True)
+    prepared = prepare_request(
+        "client-side-expired.pdf",
+        _minimal_pdf_bytes(),
+        "client-side PAdES signing",
+        cert_record["serial"],
+    )
+    confirm_intent(prepared["request_id"])
+    prepare_client_pdf_signature(prepared["request_id"])
+    _CLIENT_PDF_PRESIGNS[prepared["request_id"]]["expires_at"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat()
+
+    with pytest.raises(ValueError, match="expired"):
+        finalize_client_pdf_signature(
+            prepared["request_id"],
+            base64.b64encode(b"not-used-after-expiry-check").decode("ascii"),
+        )
 
 
 def test_workspace_response_returns_key_custody_metadata():
@@ -892,6 +1114,7 @@ def test_sign_pdf_with_sha384():
     result = sign_pdf_request(prepared["request_id"])
     assert result["verification"]["status"] == "accepted"
     assert result["metadata"]["digest_algorithm"] == "SHA-384"
+    assert result["verification"]["digest_algorithm"] == "SHA-384"
 
 
 def test_sign_pdf_with_sha512():
@@ -996,6 +1219,7 @@ def test_verification_report_has_timestamp_source():
 
     report = result["verification"]
     assert "timestamp_source" in report
+    assert report["timestamp_source"] != "unknown"
     assert "production_tsa" in report
     assert report["production_tsa"] is False
     assert report["legal_ready"] is False

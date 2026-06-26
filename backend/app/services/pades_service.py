@@ -7,6 +7,8 @@ it only claims PAdES-B-LT when a valid signature timestamp and embedded
 validation evidence are present in the signed PDF.
 """
 
+import asyncio
+import io
 from pathlib import Path
 from typing import Dict
 
@@ -14,9 +16,11 @@ from asn1crypto import keys, pem
 from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
 from pyhanko.pdf_utils.reader import PdfFileReader
 from pyhanko.sign import fields, signers, validation
+from pyhanko.sign.signers.pdf_signer import PdfCMSSignedAttributes, PdfTBSDocument
 from pyhanko.sign.general import load_certs_from_pemder_data
 from pyhanko.sign.timestamps import DummyTimeStamper
 from pyhanko_certvalidator import ValidationContext
+from pyhanko_certvalidator.registry import SimpleCertificateStore
 
 from app.services.algorithm_policy import ALGORITHM_POLICY
 from app.services.pki_service import INT_CERT, ROOT_CERT, TSA_CERT, TSA_KEY, USER_KEY
@@ -125,6 +129,259 @@ def create_basic_pdf_signature(
         "signature_algorithm": "RSA-PSS",
         "timestamp_requested": timestamper is not None,
         "ltv_requested": embed_validation_info,
+    }
+
+
+def _external_signer_for_cert(signer_cert_path: str | Path, signature_value) -> signers.ExternalSigner:
+    signer_cert = next(iter(load_certs_from_pemder_data(Path(signer_cert_path).read_bytes())))
+    cert_store = SimpleCertificateStore()
+    cert_store.register_multiple(list(load_certs_from_pemder_data(INT_CERT.read_bytes())))
+    cert_store.register_multiple(list(load_certs_from_pemder_data(ROOT_CERT.read_bytes())))
+    return signers.ExternalSigner(
+        signing_cert=signer_cert,
+        cert_registry=cert_store,
+        signature_value=signature_value,
+        prefer_pss=True,
+    )
+
+
+def _rsa_pss_salt_length(public_key_size_bits: int, digest_algorithm: str) -> int:
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(digest_algorithm)
+    key_bytes = (public_key_size_bits + 7) // 8
+    salt_length = key_bytes - hash_algorithm.digest_size - 2
+    if salt_length <= 0:
+        raise PAdESError("RSA key is too small for RSA-PSS with the selected digest")
+    return salt_length
+
+
+def _sync_standard_report_fields(
+    verification_report: Dict,
+    *,
+    achieved_profile: str,
+    missing: list[str],
+    digest_algorithm: str,
+    timestamp_status: Dict,
+    revocation_status: Dict,
+) -> None:
+    timestamp_source = timestamp_status.get(
+        "timestamp_source",
+        timestamp_status.get("source", "unknown"),
+    )
+    verification_report.update(
+        {
+            "target_profile": TARGET_PADES_PROFILE,
+            "achieved_profile": achieved_profile,
+            "missing_requirements": missing,
+            "digest_algorithm": digest_algorithm,
+            "signature_algorithm": "RSA-PSS",
+            "timestamp_source": timestamp_source,
+            "production_tsa": timestamp_status.get("production_tsa", False),
+            "revocation_evidence_status": revocation_status.get("state", "missing"),
+            "legal_ready": False,
+        }
+    )
+    verification_report["warnings"] = [
+        "Target profile is PAdES-B-LT, but legal readiness is not asserted for this demo CA.",
+        *([f"Missing for PAdES-B-LT: {', '.join(missing)}."] if missing else []),
+        f"Timestamping uses {timestamp_source}.",
+        "Trust root is the local SecureDoc Demo Root CA.",
+    ]
+
+
+def _merge_timestamp_provider_status(timestamp_status: Dict, timestamp_provider: Dict) -> Dict:
+    merged = {**timestamp_provider, **timestamp_status}
+    if "timestamp_source" not in merged:
+        merged["timestamp_source"] = timestamp_provider.get("timestamp_source", "unknown")
+    if "source" not in merged and timestamp_provider.get("source"):
+        merged["source"] = timestamp_provider["source"]
+    return merged
+
+
+def prepare_external_pades_signature(
+    input_pdf_path: str | Path,
+    presigned_pdf_path: str | Path,
+    signer_cert_path: str | Path,
+    reason: str,
+    field_name: str,
+    *,
+    public_key_size_bits: int,
+    digest_algorithm: str | None = None,
+) -> Dict:
+    """Prepare a PDF for external/client-side PAdES signing.
+
+    The returned ``signed_attributes_der`` is what the client must sign with the
+    private key. The backend stores the prepared ByteRange state and later uses
+    the client signature to build the CMS object and fill the PDF placeholder.
+    """
+    input_pdf_path = Path(input_pdf_path)
+    presigned_pdf_path = Path(presigned_pdf_path)
+    signer_cert_path = Path(signer_cert_path)
+    ensure_pdf_file(input_pdf_path)
+    presigned_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+
+    md_algorithm = ALGORITHM_POLICY.pyhanko_digest(digest_algorithm)
+    digest_display = ALGORITHM_POLICY.display_digest(md_algorithm)
+    signature_len = public_key_size_bits // 8
+    external_signer = _external_signer_for_cert(signer_cert_path, signature_value=signature_len)
+    timestamper, timestamp_provider = add_rfc3161_timestamp(md_algorithm)
+    validation_context, revocation_status = collect_validation_info(signer_cert_path)
+    signature_meta = signers.PdfSignatureMetadata(
+        field_name=field_name,
+        md_algorithm=md_algorithm,
+        reason=reason,
+        name="SecureDoc Client-side Signer",
+        subfilter=fields.SigSeedSubFilter.PADES,
+        embed_validation_info=True,
+        validation_context=validation_context,
+    )
+    pdf_signer = signers.PdfSigner(
+        signature_meta,
+        signer=external_signer,
+        timestamper=timestamper,
+        new_field_spec=fields.SigFieldSpec(sig_field_name=field_name),
+    )
+
+    try:
+        with input_pdf_path.open("rb") as src:
+            writer = IncrementalPdfFileWriter(src)
+            signing_session = pdf_signer.init_signing_session(writer)
+            validation_info = asyncio.run(signing_session.perform_presign_validation(writer))
+            estimation = signing_session.estimate_signature_container_size(
+                validation_info,
+                tight=signature_meta.tight_size_estimates,
+            )
+            bytes_reserved = asyncio.run(estimation)
+            tbs_document = signing_session.prepare_tbs_document(
+                validation_info=validation_info,
+                bytes_reserved=bytes_reserved,
+            )
+            output_buffer = io.BytesIO()
+            prepared_digest, res_output = tbs_document.digest_tbs_document(output=output_buffer)
+            presigned_pdf_path.write_bytes(res_output.getvalue())
+            signed_attrs = asyncio.run(
+                tbs_document.signer.signed_attrs(
+                    prepared_digest.document_digest,
+                    tbs_document.md_algorithm,
+                    attr_settings=PdfCMSSignedAttributes(
+                        signing_time=signing_session.system_time,
+                        adobe_revinfo_attr=(
+                            None if validation_info is None else validation_info.adobe_revinfo_attr
+                        ),
+                        cades_signed_attrs=signature_meta.cades_signed_attr_spec,
+                    ),
+                    use_pades=tbs_document.use_pades,
+                    timestamper=tbs_document.timestamper,
+                    is_pdf_sig=True,
+                )
+            )
+    except Exception as exc:
+        raise PAdESError(f"Could not prepare external PAdES signature: {exc}") from exc
+
+    return {
+        "prepared_digest": prepared_digest,
+        "tbs_document": tbs_document,
+        "signer_cert_path": str(signer_cert_path),
+        "signed_attrs": signed_attrs,
+        "signed_attrs_der": signed_attrs.dump(),
+        "presigned_pdf_path": str(presigned_pdf_path),
+        "digest_algorithm": digest_display,
+        "digest_algorithm_normalized": md_algorithm,
+        "signature_algorithm": "RSA-PSS",
+        "rsa_pss_salt_length": _rsa_pss_salt_length(public_key_size_bits, md_algorithm),
+        "timestamp_provider": timestamp_provider,
+        "revocation_evidence_status": revocation_status,
+        "bytes_reserved": bytes_reserved,
+        "document_digest": prepared_digest.document_digest,
+    }
+
+
+def finalize_external_pades_signature(prepared_state: Dict, signature: bytes) -> Dict:
+    """Build CMS with an externally produced signature and finalise the PDF."""
+    tbs_document = prepared_state["tbs_document"]
+    prepared_digest = prepared_state["prepared_digest"]
+    presigned_pdf_path = Path(prepared_state["presigned_pdf_path"])
+    external_signer = _external_signer_for_cert(
+        prepared_state["signer_cert_path"],
+        signature_value=signature,
+    )
+    try:
+        signed_attrs = prepared_state["signed_attrs"]
+        signature_cms = asyncio.run(
+            external_signer.async_sign_prescribed_attributes(
+                prepared_state["digest_algorithm_normalized"],
+                signed_attrs,
+                timestamper=tbs_document.timestamper,
+            )
+        )
+        with presigned_pdf_path.open("r+b") as output:
+            PdfTBSDocument.finish_signing(
+                output,
+                prepared_digest=prepared_digest,
+                signature_cms=signature_cms,
+                post_sign_instr=tbs_document.post_sign_instructions,
+                validation_context=tbs_document.validation_context,
+            )
+    except Exception as exc:
+        raise PAdESError(f"Could not finalize external PAdES signature: {exc}") from exc
+
+    verification_report = verify_pdf_signature(presigned_pdf_path)
+    ltv_status = embed_ltv_info(presigned_pdf_path, requested=True)
+    timestamp_provider = prepared_state.get("timestamp_provider", {})
+    timestamp_status = _merge_timestamp_provider_status(
+        verification_report["advanced"].get("timestamp_status", {}),
+        timestamp_provider,
+    )
+    revocation_status = prepared_state.get("revocation_evidence_status", {})
+    if ltv_status["state"] == "embedded":
+        revocation_status = {**revocation_status, "state": "embedded"}
+    missing = _missing_requirements(timestamp_status, revocation_status, ltv_status)
+    achieved_profile = _achieved_profile(timestamp_status, ltv_status, missing)
+    verification_report["advanced"].update(
+        {
+            "target_profile": TARGET_PADES_PROFILE,
+            "achieved_profile": achieved_profile,
+            "pades_profile": achieved_profile,
+            "missing_requirements": missing,
+            "timestamp_status": timestamp_status,
+            "timestamp_provider": timestamp_provider,
+            "revocation_evidence_status": revocation_status,
+            "ltv_status": ltv_status,
+            "digest_algorithm": prepared_state["digest_algorithm"],
+            "signature_algorithm": "RSA-PSS",
+        }
+    )
+    _sync_standard_report_fields(
+        verification_report,
+        achieved_profile=achieved_profile,
+        missing=missing,
+        digest_algorithm=prepared_state["digest_algorithm"],
+        timestamp_status=timestamp_status,
+        revocation_status=revocation_status,
+    )
+    return {
+        "target_profile": TARGET_PADES_PROFILE,
+        "achieved_profile": achieved_profile,
+        "pades_profile": achieved_profile,
+        "signed_pdf_path": str(presigned_pdf_path),
+        "digest_algorithm": prepared_state["digest_algorithm"],
+        "signature_algorithm": "RSA-PSS",
+        "timestamp_status": timestamp_status,
+        "timestamp_provider": timestamp_provider,
+        "revocation_evidence_status": revocation_status,
+        "certificate_chain_status": verification_report["advanced"].get("certificate_chain_status"),
+        "missing_requirements": missing,
+        "verification_report": verification_report,
+        "standards": {
+            "certificate_profile": ["RFC5280"],
+            "timestamp": TIMESTAMP_STANDARD,
+            "revocation": REVOCATION_STANDARDS,
+            "cms": "RFC5652",
+            "pades": PADES_STANDARD,
+        },
+        "external_signing": {
+            "signed_attribute_source": "CMS signedAttrs DER",
+            "private_key_on_backend": False,
+        },
     }
 
 
@@ -454,7 +711,10 @@ def sign_pdf_pades_blt(
         ltv_requested = False
 
     verification_report = verify_pdf_signature(output_pdf_path)
-    timestamp_status = verification_report["advanced"].get("timestamp_status", timestamp_provider)
+    timestamp_status = _merge_timestamp_provider_status(
+        verification_report["advanced"].get("timestamp_status", {}),
+        timestamp_provider,
+    )
     ltv_status = embed_ltv_info(output_pdf_path, ltv_requested)
     if ltv_status["state"] == "embedded":
         revocation_status = {**revocation_status, "state": "embedded"}
@@ -476,6 +736,14 @@ def sign_pdf_pades_blt(
             "digest_algorithm": digest_display,
             "signature_algorithm": "RSA-PSS",
         }
+    )
+    _sync_standard_report_fields(
+        verification_report,
+        achieved_profile=achieved_profile,
+        missing=missing,
+        digest_algorithm=digest_display,
+        timestamp_status=timestamp_status,
+        revocation_status=revocation_status,
     )
 
     return {

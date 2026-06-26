@@ -6,6 +6,8 @@ from app.services.pki_service import get_user_certificate, certificate_view_dict
 from app.services.signing_service import (
     prepare_request,
     confirm_intent,
+    finalize_client_pdf_signature,
+    prepare_client_pdf_signature,
     sign_and_verify,
     sign_pdf_request,
     get_signed_pdf_record,
@@ -38,6 +40,8 @@ def get_workspace():
             "sign_and_verify",
             "sign_pdf",
             "submit_client_signature",
+            "client_pades_prepare",
+            "client_pades_finalize",
             "download_signed_pdf",
         ],
         "digest_capabilities": ALGORITHM_POLICY.digest_capabilities(),
@@ -87,6 +91,20 @@ def sign_verify(request_id: str):
 def sign_pdf(request_id: str):
     try:
         return sign_pdf_request(request_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@router.post("/client-pades/prepare")
+def prepare_client_pades(request_id: str):
+    try:
+        return prepare_client_pdf_signature(request_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+@router.post("/client-pades/finalize")
+def finalize_client_pades(request_id: str, signature_base64: str):
+    try:
+        return finalize_client_pdf_signature(request_id, signature_base64)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
