@@ -297,7 +297,7 @@ def activate_certificate(serial: str) -> Dict:
         if cert["serial"] == serial:
             cert["status"] = "active"
         elif cert["status"] == "active" and _email_from_record(cert) == email:
-            cert["status"] = "superseded"
+            cert["status"] = "active"
             cert["superseded_by"] = serial
 
     _write_certificates(certificates)
@@ -342,15 +342,15 @@ def _derive_status(record: Dict) -> str:
         return "revoked"
     if now > cert.not_valid_after_utc:
         return "expired"
-    if record["status"] == "superseded":
-        return "superseded"
+    if record["status"] == "active":
+        return "active"
     return record["status"]
 
 
 def _effective_status(lifecycle_status: str, revocation_status: str) -> str:
     if revocation_status == "revoked":
         return "revoked"
-    if lifecycle_status in {"revoked", "expired", "superseded", "rejected"}:
+    if lifecycle_status in {"revoked", "expired", "active", "rejected"}:
         return lifecycle_status
     return lifecycle_status
 
@@ -453,7 +453,7 @@ def sync_demo_certificate_record(force_active: bool = False):
     if force_active:
         for record in certificates:
             if record.get("status") == "active" and _email_from_record(record) == "alice@example.com":
-                record["status"] = "superseded"
+                record["status"] = "active"
                 record["superseded_by"] = serial
     has_other_active_for_alice = any(
         c.get("status") == "active" and _email_from_record(c) == "alice@example.com"
@@ -468,7 +468,7 @@ def sync_demo_certificate_record(force_active: bool = False):
     elif existing_demo and existing_demo.get("status") in {"active", "revoked"}:
         demo_status = existing_demo["status"]
     elif has_other_active_for_alice or (has_lifecycle_for_alice and existing_demo and existing_demo.get("status") == "superseded"):
-        demo_status = "superseded"
+        demo_status = "active"
     else:
         demo_status = "active"
     if revocation_service.is_revoked(serial):
