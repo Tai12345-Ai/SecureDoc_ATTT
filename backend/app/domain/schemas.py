@@ -22,6 +22,10 @@ class CertificateView(BaseModel):
     key_usage: List[str]
     certificate_profile: str
     standards: List[str]
+    key_source: Optional[str] = None
+    private_key_custody: Optional[str] = None
+    backend_has_private_key: Optional[bool] = None
+    certificate_origin: Optional[str] = None
 
 class CertificateEnrollmentRequest(BaseModel):
     display_name: str
@@ -43,6 +47,8 @@ class CertificateStatusView(BaseModel):
     valid_from: str
     valid_to: str
     key_source: str
+    private_key_custody: str
+    backend_has_private_key: bool
     certificate_origin: str
     is_bootstrap_demo_certificate: bool
     source: str

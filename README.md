@@ -64,6 +64,23 @@ backend/
 └── Blind Signature Service (RFC 9474)
 ```
 
+## Key Custody Modes
+
+SecureDoc now records key custody explicitly for each user certificate:
+
+| Mode | Private key location | Backend can sign PDF/PAdES |
+|------|----------------------|-----------------------------|
+| `DEMO_BACKEND_KEY` | Backend demo storage | Yes, demo only |
+| `CLIENT_SIDE_KEY` | Browser/user device/external client | No |
+| `REMOTE_HSM_KEY` | HSM/KMS/remote signing service | Not implemented for PDF yet |
+
+Certificates issued from a submitted public key are `CLIENT_SIDE_KEY` records:
+the backend stores the public key and proof-of-possession result, but not the
+private key. Backend PDF/PAdES signing rejects these certificates instead of
+falling back to Alice's demo backend key.
+
+More detail: [`docs/KEY_CUSTODY_AND_CERTIFICATE_LIFECYCLE.md`](docs/KEY_CUSTODY_AND_CERTIFICATE_LIFECYCLE.md).
+
 ## How to Run
 
 ### Requirements
@@ -104,14 +121,14 @@ Certificates advertise these endpoints in their extensions:
 |----------|--------|------------|
 | `GET /api/revocation/crl.der` | DER X.509 CRL | `application/pkix-crl` |
 | `GET /api/revocation/crl.pem` | PEM X.509 CRL | `application/x-pem-file` |
-| `POST /api/revocation/ocsp` | Binary OCSP response endpoint | `application/ocsp-response` |
+| `POST /api/revocation/ocsp` | Binary OCSP endpoint (parses request) | `application/ocsp-response` |
 | `GET /api/revocation/ocsp-demo` | JSON debug only | `application/json` |
 | `GET /api/certificates/demo-pki/root.der` | DER certificate | `application/pkix-cert` |
 | `GET /api/certificates/demo-pki/root.pem` | PEM certificate | `application/x-pem-file` |
 | `GET /api/certificates/demo-pki/intermediate.der` | DER certificate | `application/pkix-cert` |
 | `GET /api/certificates/demo-pki/intermediate.pem` | PEM certificate | `application/x-pem-file` |
 
-The OCSP endpoint returns a binary OCSP response, but the current demo does not fully parse arbitrary OCSP requests; it generates a response for the active demo signer certificate. This keeps the endpoint format realistic without claiming production OCSP responder behavior.
+The OCSP endpoint now parses binary OCSP requests using `cryptography.x509.ocsp.load_der_ocsp_request` to extract the requested serial number and generates a response for that specific certificate. If the serial is unknown, it returns HTTP 400.
 
 ## Demo Flow
 
@@ -119,12 +136,20 @@ The OCSP endpoint returns a binary OCSP response, but the current demo does not 
 
 1. Load active certificate
 2. Upload PDF
-3. Prepare signing request (policy-controlled digest algorithm)
-4. Confirm signing intent
-5. **Sign PDF PAdES-B-LT** (single action targeting B-LT)
-6. Download signed PDF
-7. View verification report with target/achieved profile
-8. Verify another signed PDF independently
+3. **Select digest algorithm** (SHA-256 default, SHA-384, SHA-512, or experimental SHA-3)
+4. Prepare signing request (policy-controlled digest algorithm)
+5. Confirm signing intent
+6. **Sign PDF PAdES-B-LT** (single action targeting B-LT)
+7. Download signed PDF
+8. View verification report with target/achieved profile, timestamp source, and standard status fields
+9. Verify another signed PDF independently
+
+### Remote Signing Mode
+
+1. Prepare and confirm a signing request
+2. Provide demo MFA code (default: `000000`)
+3. **Remote sign PDF** — server-side key with policy enforcement
+4. Key custody: `DEMO_BACKEND_KEY`; production requires HSM/KMS
 
 ### Blind Signature Mode
 
@@ -137,6 +162,38 @@ The OCSP endpoint returns a binary OCSP response, but the current demo does not 
 
 **Educational demo:** `POST /api/blind-signature/run` runs the entire flow server-side for demonstration.
 
+## Digest Algorithm Policy
+
+The `AlgorithmPolicy` controls which digest algorithm is used:
+
+| Category | Algorithms | PAdES Compatible |
+|----------|-----------|-----------------|
+| Default | SHA-256 | ✅ |
+| Supported | SHA-384, SHA-512 | ✅ |
+| Experimental | SHA3-256, SHA3-384, SHA3-512 | ❌ |
+| Disallowed | MD5, SHA-1 | ❌ |
+
+- **SHA-256** is the default and recommended for maximum PDF validator compatibility.
+- **SHA-384/SHA-512** are fully supported for PAdES signing.
+- **SHA-3** (SHA3-256/SHA3-384/SHA3-512) is available for canonical payload demo and advanced research. SHA-3 is NOT enabled for PAdES/PDF signing because most PDF validators do not support SHA-3 in CMS/PAdES signatures.
+- **MD5/SHA-1** are disallowed and will be rejected.
+
+## Timestamp Modes
+
+| Mode | Description | Production |
+|------|-------------|-----------|
+| `dummy` (default) | pyHanko `DummyTimeStamper` with demo TSA certificate. Produces a valid RFC3161-like ASN.1 token but from a local demo CA. | No |
+| `external` | pyHanko `HTTPTimeStamper` connecting to a real RFC3161 TSA service. Set `SECUREDOC_TSA_MODE=external` and `SECUREDOC_TSA_URL=https://...` | Closer to production |
+
+The JSON demo timestamp service (`/api/timestamp/`) is a separate signed demo token (SECUREDOC_DEMO_TSA_TOKEN_V1) — it is NOT an RFC3161 TimeStampToken.
+
+## Revocation
+
+- **CRL**: Signed X.509 CRL (RFC 5280) generated from the demo revocation registry.
+- **OCSP**: Binary OCSP endpoint (RFC 6960) that parses the OCSP request to extract the requested serial number.
+- Serial validation: only decimal digit serials are accepted. Invalid serials like `"hh"` are rejected with a clear error.
+- CRL generation gracefully skips legacy invalid serial records.
+
 ## Limitations
 
 This is an educational demo, **not production-ready**:
@@ -144,19 +201,13 @@ This is an educational demo, **not production-ready**:
 - Local demo CA — not a public trusted CA.
 - No HSM/KMS.
 - Local/demo storage (JSON files, in-memory).
-- Demo TSA uses a demo RFC 3161 token generated by pyHanko `DummyTimeStamper`, not an external production TSA service.
-- OCSP endpoint returns binary OCSP data but uses simplified request handling bound to the active demo signer certificate.
+- Demo TSA uses pyHanko `DummyTimeStamper` by default; not an external production TSA service. External TSA mode available via config.
+- OCSP endpoint parses binary OCSP requests but uses a simplified certificate store (lifecycle + bootstrap demo cert).
 - PAdES verification uses SecureDoc Demo Root CA, not a public trust anchor.
 - Legal readiness is always `false`.
 - RFC 9474 test vectors are not implemented (`compliance_status = not_test_vector_verified`).
-- Blind signature does NOT sign PDFs — it is a separate privacy token pipeline.
+- Blind signature does NOT sign PDFs — it is a separate privacy token pipeline. No Cashu compliance claim.
 - Signing history is in-memory; backend restart clears history.
 - Certificate lifecycle uses JSON in `data/certificates`.
-
-## Digest Algorithm Policy
-
-The `AlgorithmPolicy` controls which digest algorithm is used:
-- Supported: SHA-256, SHA-384, SHA-512
-- Rejected: MD5, SHA-1
-- Default: SHA-256
-- Changing `AlgorithmPolicy.default_digest` keeps prepare/verify hash behavior consistent.
+- Remote signing uses a demo backend key; production requires HSM/KMS/qualified service.
+- SHA-3 digests are experimental and not enabled for PAdES signing.

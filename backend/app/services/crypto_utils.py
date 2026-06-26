@@ -24,8 +24,11 @@ def digest_hex(data: bytes, algorithm: str | None = None) -> str:
 
 
 def sha256_bytes(data: bytes) -> str:
-    """Legacy compatibility wrapper — always uses SHA-256."""
-    return hashlib.sha256(data).hexdigest()
+    """Legacy compatibility wrapper — always uses SHA-256.
+
+    Routes through digest_hex internally for consistency with AlgorithmPolicy.
+    """
+    return digest_hex(data, "sha256")
 
 
 def canonical_json_bytes(payload: Dict[str, Any]) -> bytes:

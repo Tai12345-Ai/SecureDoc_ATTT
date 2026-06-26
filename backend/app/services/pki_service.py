@@ -7,7 +7,11 @@ Baseline:
 - pyca/cryptography: key generation and X.509 building.
 
 Demo model:
-Root CA -> Intermediate CA -> User Signing Certificate
+Root CA -> Intermediate CA -> Demo backend user signing certificate.
+
+The demo backend user private key is an educational signing key for
+DEMO_BACKEND_KEY mode only. It is not a CA key and is not a production custody
+architecture.
 
 Production model:
 - Root CA offline.
@@ -30,6 +34,7 @@ from app.core.config import settings
 from app.services.algorithm_policy import ALGORITHM_POLICY
 from app.services.crypto_utils import sha256_bytes
 from app.services.revocation_service import status as revocation_status
+from app.services.key_custody import KEY_SOURCE_DEMO_BACKEND, key_custody_metadata
 
 ROOT_KEY = settings.demo_pki_dir / "root_ca_key.pem"
 ROOT_CERT = settings.demo_pki_dir / "root_ca_cert.pem"
@@ -241,6 +246,12 @@ def _build_service_cert(
     return builder.sign(private_key=issuer_key, algorithm=ALGORITHM_POLICY.cryptography_hash())
 
 def init_demo_pki(force: bool = False) -> Dict:
+    """Bootstrap demo PKI infrastructure and demo backend signer.
+
+    This creates Root/Intermediate CA keys, TSA and OCSP responder keys, and an
+    Alice demo document-signing private key. Alice's private key exists only for
+    DEMO_BACKEND_KEY educational PDF/PAdES signing.
+    """
     if not force and _demo_pki_is_current():
         return describe_demo_pki()
 
@@ -312,6 +323,13 @@ def describe_demo_pki() -> Dict:
     tsa = _load_cert(TSA_CERT)
     ocsp = _load_cert(OCSP_CERT)
 
+    user_view = certificate_view_dict(user)
+    user_view.update(key_custody_metadata(KEY_SOURCE_DEMO_BACKEND))
+    user_view["demo_only_note"] = (
+        "Alice private key is stored by the backend only for DEMO_BACKEND_KEY "
+        "educational PDF/PAdES signing."
+    )
+
     return {
         "root": {
             "subject": root.subject.rfc4514_string(),
@@ -326,7 +344,12 @@ def describe_demo_pki() -> Dict:
         },
         "tsa_certificate": certificate_view_dict(tsa),
         "ocsp_responder_certificate": certificate_view_dict(ocsp),
-        "user_certificate": certificate_view_dict(user),
+        "user_certificate": user_view,
+        "demo_backend_user_key": {
+            **key_custody_metadata(KEY_SOURCE_DEMO_BACKEND),
+            "purpose": "educational PDF/PAdES demo signer",
+            "production_ready": False,
+        },
         "chain": [
             "User Signing Certificate",
             "SecureDoc Demo Intermediate CA",
@@ -405,13 +428,29 @@ def write_certificate_pem(path: Path, cert: x509.Certificate):
     _write(path, _cert_pem(cert))
 
 def get_demo_user_public_key_pem() -> str:
-    key = get_user_private_key()
+    key = get_demo_backend_user_private_key()
     return key.public_key().public_bytes(
         serialization.Encoding.PEM,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode("utf-8")
 
+
+def get_demo_backend_user_certificate() -> x509.Certificate:
+    init_demo_pki()
+    return _load_cert(USER_CERT)
+
+
+def get_demo_backend_user_private_key():
+    init_demo_pki()
+    return _load_key(USER_KEY)
+
+
 def get_user_certificate() -> x509.Certificate:
+    """Backward-compatible active certificate helper.
+
+    This may return a CLIENT_SIDE_KEY active certificate. Callers that need a
+    backend private key must check key custody before using get_user_private_key.
+    """
     try:
         from app.services.certificate_lifecycle_service import get_active_certificate_record
 
@@ -425,8 +464,8 @@ def get_user_certificate() -> x509.Certificate:
     return _load_cert(USER_CERT)
 
 def get_user_private_key():
-    init_demo_pki()
-    return _load_key(USER_KEY)
+    """Backward-compatible wrapper for the demo backend user private key."""
+    return get_demo_backend_user_private_key()
 
 
 def get_tsa_certificate() -> x509.Certificate:

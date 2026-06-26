@@ -13,6 +13,7 @@ from app.services.signing_service import (
     submit_client_signature,
 )
 from app.services.certificate_lifecycle_service import get_my_active_certificate, sync_demo_certificate_record
+from app.services.algorithm_policy import ALGORITHM_POLICY
 
 router = APIRouter()
 
@@ -39,13 +40,20 @@ def get_workspace():
             "submit_client_signature",
             "download_signed_pdf",
         ],
+        "digest_capabilities": ALGORITHM_POLICY.digest_capabilities(),
     }
+
+@router.get("/digest-capabilities")
+def digest_capabilities():
+    """Return available digest algorithms and their PAdES compatibility status."""
+    return ALGORITHM_POLICY.digest_capabilities()
 
 @router.post("/prepare")
 async def prepare(
     file: UploadFile = File(...),
     signing_purpose: str = Form(...),
     certificate_serial: str = Form(...),
+    digest_algorithm: str = Form("sha256"),
 ):
     data = await file.read()
     if not data:
@@ -56,6 +64,7 @@ async def prepare(
             document_bytes=data,
             signing_purpose=signing_purpose,
             certificate_serial=certificate_serial,
+            digest_algorithm=digest_algorithm,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc))
