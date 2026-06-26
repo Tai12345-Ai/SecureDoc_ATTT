@@ -25,11 +25,12 @@ export function getUserWorkspace() {
   return jfetch(`${API_BASE}/user-signing/workspace`);
 }
 
-export function prepareSigningRequest(file: File, purpose: string, certSerial: string) {
+export function prepareSigningRequest(file: File, purpose: string, certSerial: string, digestAlgorithm: string = "sha256") {
   const body = new FormData();
   body.append("file", file);
   body.append("signing_purpose", purpose);
   body.append("certificate_serial", certSerial);
+  body.append("digest_algorithm", digestAlgorithm);
   return jfetch(`${API_BASE}/user-signing/prepare`, {
     method: "POST",
     body
@@ -154,6 +155,14 @@ export function submitKeyEnrollmentProof(challengeId: string, proofSignatureBase
 
 export function remoteSign(requestId: string, mfaCode: string) {
   return jfetch(`${API_BASE}/remote-signing/sign`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ request_id: requestId, mfa_code: mfaCode })
+  });
+}
+
+export function remoteSignPdf(requestId: string, mfaCode: string) {
+  return jfetch(`${API_BASE}/remote-signing/sign-pdf`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ request_id: requestId, mfa_code: mfaCode })

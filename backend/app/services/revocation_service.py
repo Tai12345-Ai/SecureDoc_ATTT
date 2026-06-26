@@ -27,6 +27,22 @@ def _parse_time(value: str | None):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _validate_decimal_serial(serial: str) -> str:
+    """Validate that serial is a decimal integer string.
+
+    Certificate serial numbers are stored as decimal strings in the revocation
+    registry. Invalid values like "hh" would crash CRL generation because
+    int("hh") raises ValueError.
+    """
+    serial = str(serial).strip()
+    if not serial.isdigit():
+        raise ValueError(
+            f"Invalid certificate serial: {serial!r}. "
+            f"Serial must be decimal digits only."
+        )
+    return serial
+
+
 def _read_records() -> list[dict]:
     path = settings.revocation_file
     if not path.exists():
@@ -40,6 +56,7 @@ def _write_records(records: list[dict]):
 
 
 def revoke(serial: str, reason: str = "cessationOfOperation") -> dict:
+    serial = _validate_decimal_serial(serial)
     records = [record for record in _read_records() if record["serial"] != serial]
     record = {
         "serial": serial,
@@ -61,6 +78,7 @@ def _record_for(serial: str) -> dict | None:
 
 
 def status(serial: str) -> dict:
+    serial = _validate_decimal_serial(serial)
     record = _record_for(serial)
     revoked = bool(record)
     return {
@@ -75,6 +93,7 @@ def status(serial: str) -> dict:
 
 
 def status_at(serial: str, at_time_iso: str | None) -> dict:
+    serial = _validate_decimal_serial(serial)
     current = status(serial)
     if not current["revoked"]:
         return {**current, "status_at_time": "good", "revoked_at_time": False, "checked_at": at_time_iso}
@@ -110,6 +129,7 @@ def _cert_to_cryptography(cert) -> x509.Certificate:
 
 
 def generate_signed_crl() -> dict:
+    """Generate a signed CRL, skipping legacy invalid serial records."""
     from app.services.pki_service import get_intermediate_certificate, get_intermediate_private_key
 
     issuer_cert = get_intermediate_certificate()
@@ -123,16 +143,30 @@ def generate_signed_crl() -> dict:
         .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(issuer_key.public_key()), critical=False)
         .add_extension(x509.CRLNumber(int(now.timestamp())), critical=False)
     )
+
+    skipped_invalid_serials: list[str] = []
+    valid_count = 0
+
     for record in _read_records():
-        revoked_at = _parse_time(record.get("revoked_at")) or now
-        revoked = (
-            x509.RevokedCertificateBuilder()
-            .serial_number(int(record["serial"]))
-            .revocation_date(revoked_at)
-            .add_extension(x509.CRLReason(_reason_flag(record.get("reason"))), critical=False)
-            .build()
-        )
-        builder = builder.add_revoked_certificate(revoked)
+        serial_str = record.get("serial", "")
+        # Skip legacy invalid records gracefully
+        if not str(serial_str).strip().isdigit():
+            skipped_invalid_serials.append(str(serial_str))
+            continue
+
+        try:
+            revoked_at = _parse_time(record.get("revoked_at")) or now
+            revoked = (
+                x509.RevokedCertificateBuilder()
+                .serial_number(int(serial_str))
+                .revocation_date(revoked_at)
+                .add_extension(x509.CRLReason(_reason_flag(record.get("reason"))), critical=False)
+                .build()
+            )
+            builder = builder.add_revoked_certificate(revoked)
+            valid_count += 1
+        except Exception:
+            skipped_invalid_serials.append(str(serial_str))
 
     crl_obj = builder.sign(private_key=issuer_key, algorithm=ALGORITHM_POLICY.cryptography_hash())
     der = crl_obj.public_bytes(serialization.Encoding.DER)
@@ -148,6 +182,8 @@ def generate_signed_crl() -> dict:
         "crl_pem": pem,
         "crl_der": der,
         "crl_der_base64": b64e(der),
+        "skipped_invalid_record_count": len(skipped_invalid_serials),
+        "skipped_invalid_serials": skipped_invalid_serials,
     }
 
 
@@ -189,6 +225,42 @@ def get_ocsp_response(cert) -> dict:
         "ocsp_der": der,
         "ocsp_der_base64": b64e(der),
     }
+
+
+def get_ocsp_response_for_serial(serial_number: int) -> dict:
+    """Generate an OCSP response for a certificate identified by serial number.
+
+    Looks up the certificate across:
+    1. Active certificate store (lifecycle certificates)
+    2. Bootstrap demo certificate
+    """
+    from app.services.pki_service import get_user_certificate
+    from app.services.certificate_lifecycle_service import _read_certificates
+
+    serial_str = str(serial_number)
+
+    # Search lifecycle certificate records
+    try:
+        from app.services.pki_service import load_certificate_from_path
+        for record in _read_certificates():
+            if record.get("serial") == serial_str and record.get("pem_path"):
+                cert = load_certificate_from_path(record["pem_path"])
+                return get_ocsp_response(cert)
+    except Exception:
+        pass
+
+    # Try bootstrap demo cert
+    try:
+        demo_cert = get_user_certificate()
+        if str(demo_cert.serial_number) == serial_str:
+            return get_ocsp_response(demo_cert)
+    except Exception:
+        pass
+
+    raise ValueError(
+        f"Certificate with serial {serial_str} is unknown. "
+        f"Cannot generate OCSP response for unknown certificate."
+    )
 
 
 def collect_revocation_info_for_certificate(cert) -> dict:

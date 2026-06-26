@@ -29,16 +29,18 @@ export function VerificationSummary({ report, title = "PDF verification report" 
 
       <div className="summary-grid">
         <p><span>Kết quả</span><strong>{report.accepted ? "Chữ ký hợp lệ" : "Không hợp lệ"}</strong></p>
-        <p><span>Target profile</span><strong>{details.target_profile || "PAdES-B-LT"}</strong></p>
-        <p><span>Achieved profile</span><strong>{details.achieved_profile || details.pades_profile || "Không xác định"}</strong></p>
-        {details.missing_requirements?.length > 0 && (
-          <p><span>Missing for target</span><strong>{details.missing_requirements.join(", ")}</strong></p>
+        <p><span>Target profile</span><strong>{report.target_profile || details.target_profile || "PAdES-B-LT"}</strong></p>
+        <p><span>Achieved profile</span><strong>{report.achieved_profile || details.achieved_profile || details.pades_profile || "Không xác định"}</strong></p>
+        {(report.missing_requirements?.length > 0 || details.missing_requirements?.length > 0) && (
+          <p><span>Missing for target</span><strong>{(report.missing_requirements || details.missing_requirements || []).join(", ")}</strong></p>
         )}
         <p><span>Checks passed</span><strong>{passed}/{total}</strong></p>
-        <p><span>Digest</span><strong>{details.digest_algorithm || "SHA-256"}</strong></p>
-        <p><span>Signature algorithm</span><strong>{details.signature_algorithm || "RSA-PSS"}</strong></p>
-        <p><span>Timestamp</span><strong>{timestamp.state || "missing"}</strong></p>
-        <p><span>Revocation evidence</span><strong>{revocation.state || "missing"}</strong></p>
+        <p><span>Digest</span><strong>{report.digest_algorithm || details.digest_algorithm || "SHA-256"}</strong></p>
+        <p><span>Signature algorithm</span><strong>{report.signature_algorithm || details.signature_algorithm || "RSA-PSS"}</strong></p>
+        <p><span>Timestamp source</span><strong>{report.timestamp_source || timestamp.timestamp_source || timestamp.source || "unknown"}</strong></p>
+        <p><span>Production TSA</span><strong>{String(report.production_tsa ?? timestamp.production_tsa ?? false)}</strong></p>
+        <p><span>Revocation evidence</span><strong>{report.revocation_evidence_status || revocation.state || "missing"}</strong></p>
+        <p><span>OCSP mode</span><strong>{report.ocsp_mode || "demo_local_registry"}</strong></p>
         <p><span>Certificate chain</span><strong>{details.certificate_chain_status || "Không xác định"}</strong></p>
       </div>
 

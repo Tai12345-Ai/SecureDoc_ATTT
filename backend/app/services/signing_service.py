@@ -29,13 +29,19 @@ from cryptography.exceptions import InvalidSignature
 
 from app.core.config import settings
 from app.services.crypto_utils import sha256_bytes, digest_hex, canonical_json_bytes, b64e, b64d
-from app.services.pki_service import get_user_certificate, get_user_private_key, verify_chain
+from app.services.pki_service import get_demo_backend_user_private_key, load_certificate_from_path, verify_chain
 from app.services.revocation_service import status as revocation_status, status_at as revocation_status_at
 from app.services.timestamp_service import issue_demo_timestamp, verify_demo_timestamp
 from app.services.audit_service import append_event
-from app.services.certificate_lifecycle_service import get_certificate_status
+from app.services.certificate_lifecycle_service import get_certificate_record, get_certificate_status
 from app.services.algorithm_policy import ALGORITHM_POLICY
 from app.services.pades_service import sign_pdf_pades_blt
+from app.services.key_custody import (
+    KEY_SOURCE_CLIENT_SIDE,
+    KEY_SOURCE_DEMO_BACKEND,
+    KEY_SOURCE_REMOTE_HSM,
+    key_custody_metadata,
+)
 
 _REQUESTS: Dict[str, Dict] = {}
 _SIGNED_PACKAGES: Dict[str, Dict] = {}
@@ -54,9 +60,17 @@ def _assert_certificate_usable(certificate_serial: str):
         raise ValueError("Certificate profile is not valid for document signing")
     return cert_status
 
-def _assert_demo_signing_key_matches_active_certificate():
-    private_key = get_user_private_key()
-    cert = get_user_certificate()
+def _certificate_for_record(record: Dict):
+    return load_certificate_from_path(record["pem_path"])
+
+
+def _request_certificate(certificate_serial: str):
+    cert_record = get_certificate_record(certificate_serial)
+    return _certificate_for_record(cert_record), cert_record
+
+
+def _assert_demo_signing_key_matches_certificate(cert: x509.Certificate):
+    private_key = get_demo_backend_user_private_key()
     private_pub = private_key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -68,12 +82,49 @@ def _assert_demo_signing_key_matches_active_certificate():
     if private_pub != cert_pub:
         raise ValueError("Active certificate does not match the demo backend signing key")
 
-def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: str, certificate_serial: str) -> Dict:
+
+def _assert_backend_signing_allowed(cert_status: Dict, operation: str):
+    key_source = cert_status.get("key_source")
+    if key_source == KEY_SOURCE_DEMO_BACKEND:
+        return
+    if key_source == KEY_SOURCE_CLIENT_SIDE:
+        if operation == "pdf":
+            raise ValueError(
+                "This certificate uses client-side private key custody. Backend cannot sign PDF "
+                "with this certificate. Use client-side signing or remote signing flow."
+            )
+        raise ValueError(
+            "This certificate uses client-side private key custody. Backend cannot sign canonical "
+            "payload with this certificate. Use submit_client_signature."
+        )
+    if key_source == KEY_SOURCE_REMOTE_HSM:
+        if operation == "pdf":
+            raise ValueError(
+                "This certificate requires remote signing service/HSM. Remote PDF signing is not "
+                "implemented yet."
+            )
+        raise ValueError(
+            "This certificate requires remote signing service/HSM. Remote canonical payload signing "
+            "is not implemented yet."
+        )
+    raise ValueError(f"Unsupported key custody mode for backend signing: {key_source}")
+
+def prepare_request(
+    document_name: str,
+    document_bytes: bytes,
+    signing_purpose: str,
+    certificate_serial: str,
+    digest_algorithm: str | None = None,
+) -> Dict:
     cert_status = _assert_certificate_usable(certificate_serial)
+
+    # Normalize and validate digest algorithm
+    normalized_digest = ALGORITHM_POLICY.normalize_digest(digest_algorithm)
+    display_digest = ALGORITHM_POLICY.display_digest(normalized_digest)
+
     request_id = "req_" + secrets.token_hex(12)
     safe_document_name = _safe_filename(document_name)
-    digest_algorithm = ALGORITHM_POLICY.display_digest()
-    document_hash = digest_hex(document_bytes)
+    document_hash = digest_hex(document_bytes, normalized_digest)
     nonce = secrets.token_hex(16)
     now = datetime.now(timezone.utc).isoformat()
 
@@ -82,7 +133,8 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
         "requestId": request_id,
         "documentName": safe_document_name,
         "documentHash": document_hash,
-        "hashAlgorithm": digest_algorithm,
+        "hashAlgorithm": display_digest,
+        "hashAlgorithmNormalized": normalized_digest,
         "certificateSerial": certificate_serial,
         "signingPurpose": signing_purpose,
         "nonce": nonce,
@@ -100,6 +152,8 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
         "certificate_serial": certificate_serial,
         "signing_purpose": signing_purpose,
         "nonce": nonce,
+        "digest_algorithm": normalized_digest,
+        "digest_algorithm_display": display_digest,
         "payload": payload,
         "confirmed": False,
         "signed": False,
@@ -111,14 +165,30 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
         action="prepare_signing_request",
         target=request_id,
         status="ok",
-        metadata={"documentHash": document_hash, "certificateSerial": certificate_serial},
+        metadata={
+            "documentHash": document_hash,
+            "certificateSerial": certificate_serial,
+            "digestAlgorithm": display_digest,
+        },
     )
+
+    digest_info = {
+        "selected_digest": display_digest,
+        "selected_digest_normalized": normalized_digest,
+        "is_pades_compatible": ALGORITHM_POLICY.is_pades_compatible(normalized_digest),
+        "is_experimental": ALGORITHM_POLICY.is_experimental(normalized_digest),
+    }
+    if ALGORITHM_POLICY.is_experimental(normalized_digest):
+        digest_info["experimental_warning"] = (
+            f"{display_digest} is experimental. It is available for canonical payload demo "
+            f"but is NOT enabled for PAdES/PDF signing."
+        )
 
     return {
         "request_id": request_id,
         "document_name": document_name,
         "document_hash": document_hash,
-        "hash_algorithm": digest_algorithm,
+        "hash_algorithm": display_digest,
         "certificate_serial": certificate_serial,
         "signing_purpose": signing_purpose,
         "nonce": nonce,
@@ -127,6 +197,12 @@ def prepare_request(document_name: str, document_bytes: bytes, signing_purpose: 
             "canonical_payload": payload,
             "canonical_payload_preview": canonical_json_bytes(payload).decode("utf-8"),
             "certificate_status": cert_status,
+            "key_custody": {
+                "key_source": cert_status["key_source"],
+                "private_key_custody": cert_status["private_key_custody"],
+                "backend_has_private_key": cert_status["backend_has_private_key"],
+            },
+            "digest_policy": digest_info,
         },
     }
 
@@ -160,14 +236,18 @@ def sign_and_verify(request_id: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
-    _assert_certificate_usable(record["certificate_serial"])
-    _assert_demo_signing_key_matches_active_certificate()
+    cert_status = _assert_certificate_usable(record["certificate_serial"])
+    _assert_backend_signing_allowed(cert_status, operation="canonical")
 
-    private_key = get_user_private_key()
-    cert = get_user_certificate()
+    cert, _cert_record = _request_certificate(record["certificate_serial"])
+    _assert_demo_signing_key_matches_certificate(cert)
+    private_key = get_demo_backend_user_private_key()
     payload_bytes = canonical_json_bytes(record["payload"])
-    hash_algorithm = ALGORITHM_POLICY.cryptography_hash()
-    digest_algorithm = ALGORITHM_POLICY.display_digest()
+
+    # Use digest from the request record, not global default
+    selected_digest = record.get("digest_algorithm", ALGORITHM_POLICY.default_digest)
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(selected_digest)
+    digest_algorithm = ALGORITHM_POLICY.display_digest(selected_digest)
 
     signature = private_key.sign(
         payload_bytes,
@@ -181,9 +261,14 @@ def sign_and_verify(request_id: str) -> Dict:
         "payload": record["payload"],
         "signatureAlgorithm": "RSA-PSS",
         "digestAlgorithm": digest_algorithm,
+        "digestAlgorithmNormalized": selected_digest,
         "signatureBase64": b64e(signature),
         "signerCertificatePem": cert.public_bytes(serialization.Encoding.PEM).decode("utf-8"),
         "timestamp": timestamp,
+        "keyCustody": cert_status["key_source"],
+        "privateKeyCustody": cert_status["private_key_custody"],
+        "backendHasPrivateKey": cert_status["backend_has_private_key"],
+        "signatureOrigin": "demo_backend_service",
     }
 
     _SIGNED_PACKAGES[request_id] = signed_package
@@ -205,12 +290,16 @@ def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
-    _assert_certificate_usable(record["certificate_serial"])
+    cert_status = _assert_certificate_usable(record["certificate_serial"])
 
-    cert = get_user_certificate()
+    cert, _cert_record = _request_certificate(record["certificate_serial"])
     payload_bytes = canonical_json_bytes(record["payload"])
-    hash_algorithm = ALGORITHM_POLICY.cryptography_hash()
-    digest_algorithm = ALGORITHM_POLICY.display_digest()
+
+    # Use digest from the request record
+    selected_digest = record.get("digest_algorithm", ALGORITHM_POLICY.default_digest)
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(selected_digest)
+    digest_algorithm = ALGORITHM_POLICY.display_digest(selected_digest)
+
     try:
         cert.public_key().verify(
             b64d(signature_base64),
@@ -222,25 +311,45 @@ def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
         raise ValueError("Client signature does not verify against active certificate") from exc
 
     timestamp = issue_demo_timestamp(record["document_hash"])
+    custody = key_custody_metadata(cert_status["key_source"])
     signed_package = {
         "packageType": "SECUREDOC_CLIENT_SIGNED_PACKAGE_V1",
         "payload": record["payload"],
         "signatureAlgorithm": "RSA-PSS",
         "digestAlgorithm": digest_algorithm,
+        "digestAlgorithmNormalized": selected_digest,
         "signatureBase64": signature_base64,
         "signerCertificatePem": cert.public_bytes(serialization.Encoding.PEM).decode("utf-8"),
         "timestamp": timestamp,
-        "keyCustody": "BROWSER_LOCAL_SIGNING",
+        "keyCustody": custody["key_source"],
+        "privateKeyCustody": custody["private_key_custody"],
+        "backendHasPrivateKey": custody["backend_has_private_key"],
+        "signatureOrigin": "browser_or_external_client",
     }
     _SIGNED_PACKAGES[request_id] = signed_package
     record["signed"] = True
     report = verify_signed_package(request_id, signed_package)
+    report["keyCustody"] = custody["key_source"]
+    report["privateKeyCustody"] = custody["private_key_custody"]
+    report["backendHasPrivateKey"] = custody["backend_has_private_key"]
+    report["signatureOrigin"] = "browser_or_external_client"
+    report.setdefault("advanced", {})["key_custody"] = {
+        "key_source": custody["key_source"],
+        "private_key_custody": custody["private_key_custody"],
+        "backend_has_private_key": custody["backend_has_private_key"],
+        "signature_origin": "browser_or_external_client",
+    }
     append_event(
         actor="alice@example.com",
         action="submit_client_signature",
         target=request_id,
         status="ok" if report["accepted"] else "rejected",
-        metadata={"keyCustody": "BROWSER_LOCAL_SIGNING"},
+        metadata={
+            "keyCustody": custody["key_source"],
+            "privateKeyCustody": custody["private_key_custody"],
+            "backendHasPrivateKey": custody["backend_has_private_key"],
+            "signatureOrigin": "browser_or_external_client",
+        },
     )
     return report
 
@@ -250,13 +359,22 @@ def sign_pdf_request(request_id: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
-    _assert_certificate_usable(record["certificate_serial"])
-    _assert_demo_signing_key_matches_active_certificate()
+    cert_status = _assert_certificate_usable(record["certificate_serial"])
+    _assert_backend_signing_allowed(cert_status, operation="pdf")
+    signer_cert, _cert_record = _request_certificate(record["certificate_serial"])
+    _assert_demo_signing_key_matches_certificate(signer_cert)
+
+    # Reject SHA-3 for PAdES
+    selected_digest = record.get("digest_algorithm", ALGORITHM_POLICY.default_digest)
+    if not ALGORITHM_POLICY.is_pades_compatible(selected_digest):
+        raise ValueError(
+            f"Selected digest {ALGORITHM_POLICY.display_digest(selected_digest)} is experimental "
+            f"and not enabled for PAdES signing. Use SHA-256/SHA-384/SHA-512 for PAdES."
+        )
 
     document_path = Path(record["document_path"])
     file_id = "pdf_" + secrets.token_hex(12)
     signed_path = settings.signed_documents_dir / f"signed_{file_id}.pdf"
-    signer_cert = get_user_certificate()
     signer_cert_path = settings.certificates_dir / f"active_signer_{record['certificate_serial']}.pem"
     signer_cert_path.parent.mkdir(parents=True, exist_ok=True)
     signer_cert_path.write_bytes(signer_cert.public_bytes(serialization.Encoding.PEM))
@@ -267,6 +385,7 @@ def sign_pdf_request(request_id: str) -> Dict:
         signer_cert_path=signer_cert_path,
         reason=record["signing_purpose"],
         field_name=f"SecureDocSignature_{request_id}",
+        digest_algorithm=selected_digest,
     )
     verify_report = sign_result["verification_report"]
     signed_hash = sha256_bytes(signed_path.read_bytes())
@@ -288,6 +407,9 @@ def sign_pdf_request(request_id: str) -> Dict:
         "timestamp_status": sign_result["timestamp_status"],
         "revocation_evidence_status": sign_result["revocation_evidence_status"],
         "certificate_chain_status": sign_result["certificate_chain_status"],
+        "key_source": cert_status["key_source"],
+        "private_key_custody": cert_status["private_key_custody"],
+        "backend_has_private_key": cert_status["backend_has_private_key"],
         "missing_requirements": sign_result["missing_requirements"],
         "verification_report": verify_report,
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -303,6 +425,8 @@ def sign_pdf_request(request_id: str) -> Dict:
             "fileId": file_id,
             "targetProfile": sign_result["target_profile"],
             "achievedProfile": sign_result["achieved_profile"],
+            "digestAlgorithm": sign_result["digest_algorithm"],
+            "keySource": cert_status["key_source"],
         },
     )
 
@@ -314,6 +438,11 @@ def sign_pdf_request(request_id: str) -> Dict:
         "verification": verify_report,
         "advanced": {
             "pades_signing": sign_result,
+            "key_custody": {
+                "key_source": cert_status["key_source"],
+                "private_key_custody": cert_status["private_key_custody"],
+                "backend_has_private_key": cert_status["backend_has_private_key"],
+            },
             "storage": {
                 "signed_file_id": file_id,
                 "signed_document_hash": signed_hash,
@@ -366,7 +495,14 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     cert = x509.load_pem_x509_certificate(package["signerCertificatePem"].encode("utf-8"))
     public_key = cert.public_key()
     signer_cert_serial = str(cert.serial_number)
-    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(package.get("digestAlgorithm"))
+
+    # Use the digest declared in the signed package for verification
+    package_digest = (
+        package.get("digestAlgorithmNormalized")
+        or package.get("digestAlgorithm")
+        or ALGORITHM_POLICY.default_digest
+    )
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(package_digest)
 
     try:
         public_key.verify(
@@ -379,7 +515,13 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     except InvalidSignature:
         add("cryptoValid", "Chữ ký mật mã hợp lệ", False, "Không xác minh được chữ ký.")
 
-    actual_document_hash = digest_hex(Path(record["document_path"]).read_bytes(), package.get("digestAlgorithm"))
+    # Recompute document hash using the digest declared in the signed payload
+    payload_hash_algorithm = (
+        payload.get("hashAlgorithmNormalized")
+        or payload.get("hashAlgorithm")
+        or ALGORITHM_POLICY.default_digest
+    )
+    actual_document_hash = digest_hex(Path(record["document_path"]).read_bytes(), payload_hash_algorithm)
     add(
         "documentHashValid",
         "Tài liệu chưa bị sửa",
@@ -435,6 +577,14 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
     )
 
     accepted = all(c["ok"] for c in checks)
+
+    selected_digest_display = ALGORITHM_POLICY.display_digest(
+        record.get("digest_algorithm", ALGORITHM_POLICY.default_digest)
+    )
+    package_key_source = package.get("keyCustody")
+    package_private_key_custody = package.get("privateKeyCustody")
+    package_backend_has_private_key = package.get("backendHasPrivateKey")
+    package_signature_origin = package.get("signatureOrigin")
     warnings = [
         "Demo mode: chưa dùng public trusted CA.",
         "Demo mode: chưa dùng HSM/KMS.",
@@ -451,13 +601,29 @@ def verify_signed_package(request_id: str, signed_package: Dict | None = None) -
         "legal_ready": False,
         "warnings": warnings,
         "accepted": accepted,
+        "keyCustody": package_key_source,
+        "privateKeyCustody": package_private_key_custody,
+        "backendHasPrivateKey": package_backend_has_private_key,
+        "signatureOrigin": package_signature_origin,
         "advanced": {
             "signed_package": package,
+            "key_custody": {
+                "key_source": package_key_source,
+                "private_key_custody": package_private_key_custody,
+                "backend_has_private_key": package_backend_has_private_key,
+                "signature_origin": package_signature_origin,
+            },
             "timestamp_validation": ts,
             "revocation_validation": {
                 **rev,
                 "checked_at_policy": revocation_checked_at,
             },
+            "digest_algorithm": selected_digest_display,
+            "signature_algorithm": "RSA-PSS",
+            "timestamp_source": "demo_signed_tsa_token",
+            "production_tsa": False,
+            "ocsp_mode": "demo_local_registry",
+            "legal_ready": False,
             "verification_model": "DSS-style validation report simplified for educational demo.",
         },
     }

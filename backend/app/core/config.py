@@ -18,6 +18,13 @@ class Settings(BaseModel):
     revocation_file: Path = DATA_DIR / "revocations.json"
     audit_file: Path = DATA_DIR / "audit_events.jsonl"
 
+    # Timestamp configuration
+    # tsa_mode: "dummy" = pyHanko DummyTimeStamper (demo, not production)
+    #           "external" = connect to an external RFC3161 TSA service
+    tsa_mode: str = os.environ.get("SECUREDOC_TSA_MODE", "dummy")
+    tsa_url: str | None = os.environ.get("SECUREDOC_TSA_URL", None)
+    tsa_timeout: int = int(os.environ.get("SECUREDOC_TSA_TIMEOUT", "10"))
+
 settings = Settings()
 
 for directory in [

@@ -87,6 +87,9 @@ export function CertificateLifecyclePage() {
             <p><span>Subject</span><strong>{active.subject}</strong></p>
             <p><span>Issuer</span><strong>{active.issuer}</strong></p>
             <p><span>Status</span><strong className={active.status === "active" ? "green" : ""}>{status?.lifecycle_status || active.status}</strong></p>
+            <p><span>Key source</span><strong>{active.key_source || status?.key_source || "unknown"}</strong></p>
+            <p><span>Private key custody</span><strong>{active.private_key_custody || status?.private_key_custody || "unknown"}</strong></p>
+            <p><span>Backend has private key</span><strong>{String(active.backend_has_private_key ?? status?.backend_has_private_key ?? false)}</strong></p>
           </div>
         ) : <p>Đang tải certificate...</p>}
       </div>
@@ -100,9 +103,12 @@ export function CertificateLifecyclePage() {
             <p><span>Effective</span><strong>{status.effective_status}</strong></p>
             <p><span>Profile</span><strong>{status.profile_id}</strong></p>
             <p><span>Key source</span><strong>{status.key_source}</strong></p>
+            <p><span>Private key custody</span><strong>{status.private_key_custody}</strong></p>
+            <p><span>Backend private key</span><strong>{String(status.backend_has_private_key)}</strong></p>
             <p><span>Origin</span><strong>{status.certificate_origin}</strong></p>
             <p><span>X.509 profile</span><strong>{status.profile_validation?.valid ? "valid" : "invalid"}</strong></p>
           </div>
+          <p className="hint">Key custody mode: DEMO_BACKEND_KEY can use the demo backend key for PDF signing; CLIENT_SIDE_KEY cannot be used by backend PAdES signing; REMOTE_HSM_KEY requires a remote signing service/HSM.</p>
           <p className="hint">{status.warning}</p>
           {status.profile_validation?.checks && (
             <div className="checks">
