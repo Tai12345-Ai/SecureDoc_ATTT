@@ -1,0 +1,3 @@
+SecureDoc canonical payload test
+Document type: plain text
+Expected: canonical sign-and-verify accepted; PDF signing rejected because not PDF.

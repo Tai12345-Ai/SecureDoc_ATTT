@@ -1,0 +1,141 @@
+{
+  "info": {
+    "name": "SecureDoc_ATTT Test Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "serial",
+      "value": ""
+    },
+    {
+      "key": "request_id",
+      "value": ""
+    },
+    {
+      "key": "file_id",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/health"
+      }
+    },
+    {
+      "name": "Init demo PKI",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/certificates/init-demo-pki?force=true"
+      }
+    },
+    {
+      "name": "Enroll demo backend key",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/certificates/enroll-demo-backend-key?activate=true"
+      }
+    },
+    {
+      "name": "My active cert",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/api/certificates/my-active"
+      }
+    },
+    {
+      "name": "Prepare user signing",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/user-signing/prepare",
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": "inputs/01_contract_basic_unsigned.pdf"
+            },
+            {
+              "key": "signing_purpose",
+              "value": "Ky hop dong demo",
+              "type": "text"
+            },
+            {
+              "key": "certificate_serial",
+              "value": "{{serial}}",
+              "type": "text"
+            },
+            {
+              "key": "digest_algorithm",
+              "value": "sha256",
+              "type": "text"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Confirm intent",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/user-signing/confirm?request_id={{request_id}}"
+      }
+    },
+    {
+      "name": "Sign PDF",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/user-signing/sign-pdf?request_id={{request_id}}"
+      }
+    },
+    {
+      "name": "Verify signed file",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/verification/verify-signed-file/{{file_id}}"
+      }
+    },
+    {
+      "name": "Timestamp issue",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/timestamp/issue",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message_imprint_sha256\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n}"
+        }
+      }
+    },
+    {
+      "name": "Blind run",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": "{{baseUrl}}/api/blind-signature/run",
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"message\": \"privacy-token-demo-postman\"\n}"
+        }
+      }
+    }
+  ]
+}
