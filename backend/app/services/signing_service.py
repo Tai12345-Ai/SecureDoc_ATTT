@@ -18,7 +18,7 @@ This demo signs a canonical payload that binds:
 import json
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -35,7 +35,11 @@ from app.services.timestamp_service import issue_demo_timestamp, verify_demo_tim
 from app.services.audit_service import append_event
 from app.services.certificate_lifecycle_service import get_certificate_record, get_certificate_status
 from app.services.algorithm_policy import ALGORITHM_POLICY
-from app.services.pades_service import sign_pdf_pades_blt
+from app.services.pades_service import (
+    finalize_external_pades_signature,
+    prepare_external_pades_signature,
+    sign_pdf_pades_blt,
+)
 from app.services.key_custody import (
     KEY_SOURCE_CLIENT_SIDE,
     KEY_SOURCE_DEMO_BACKEND,
@@ -46,6 +50,8 @@ from app.services.key_custody import (
 _REQUESTS: Dict[str, Dict] = {}
 _SIGNED_PACKAGES: Dict[str, Dict] = {}
 _SIGNED_PDF_FILES: Dict[str, Dict] = {}
+_CLIENT_PDF_PRESIGNS: Dict[str, Dict] = {}
+CLIENT_PDF_PRESIGN_TTL_SECONDS = 300
 
 def _safe_filename(filename: str | None) -> str:
     name = Path(filename or "document.bin").name
@@ -67,6 +73,13 @@ def _certificate_for_record(record: Dict):
 def _request_certificate(certificate_serial: str):
     cert_record = get_certificate_record(certificate_serial)
     return _certificate_for_record(cert_record), cert_record
+
+
+def _parse_utc_datetime(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _assert_demo_signing_key_matches_certificate(cert: x509.Certificate):
@@ -91,7 +104,7 @@ def _assert_backend_signing_allowed(cert_status: Dict, operation: str):
         if operation == "pdf":
             raise ValueError(
                 "This certificate uses client-side private key custody. Backend cannot sign PDF "
-                "with this certificate. Use client-side signing or remote signing flow."
+                "with this certificate. Use client-side PAdES pre-sign/finalize or remote signing flow."
             )
         raise ValueError(
             "This certificate uses client-side private key custody. Backend cannot sign canonical "
@@ -236,6 +249,8 @@ def sign_and_verify(request_id: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
+    if record.get("signed"):
+        raise ValueError("Signing request has already been signed")
     cert_status = _assert_certificate_usable(record["certificate_serial"])
     _assert_backend_signing_allowed(cert_status, operation="canonical")
 
@@ -290,6 +305,8 @@ def submit_client_signature(request_id: str, signature_base64: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
+    if record.get("signed"):
+        raise ValueError("Signing request has already been signed")
     cert_status = _assert_certificate_usable(record["certificate_serial"])
 
     cert, _cert_record = _request_certificate(record["certificate_serial"])
@@ -359,6 +376,8 @@ def sign_pdf_request(request_id: str) -> Dict:
         raise ValueError("Unknown signing request")
     if not record["confirmed"]:
         raise ValueError("Signing intent has not been confirmed")
+    if record.get("signed"):
+        raise ValueError("Signing request has already been signed")
     cert_status = _assert_certificate_usable(record["certificate_serial"])
     _assert_backend_signing_allowed(cert_status, operation="pdf")
     signer_cert, _cert_record = _request_certificate(record["certificate_serial"])
@@ -415,6 +434,7 @@ def sign_pdf_request(request_id: str) -> Dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _SIGNED_PDF_FILES[file_id] = metadata
+    record["signed"] = True
 
     append_event(
         actor="alice@example.com",
@@ -449,6 +469,221 @@ def sign_pdf_request(request_id: str) -> Dict:
             },
         },
     }
+
+
+def prepare_client_pdf_signature(request_id: str) -> Dict:
+    record = _REQUESTS.get(request_id)
+    if not record:
+        raise ValueError("Unknown signing request")
+    if not record["confirmed"]:
+        raise ValueError("Signing intent has not been confirmed")
+    if record.get("signed"):
+        raise ValueError("Signing request has already been signed")
+
+    cert_status = _assert_certificate_usable(record["certificate_serial"])
+    if cert_status.get("key_source") != KEY_SOURCE_CLIENT_SIDE:
+        raise ValueError("Client-side PAdES signing requires a CLIENT_SIDE_KEY certificate")
+
+    selected_digest = record.get("digest_algorithm", ALGORITHM_POLICY.default_digest)
+    if not ALGORITHM_POLICY.is_pades_compatible(selected_digest):
+        raise ValueError(
+            f"Selected digest {ALGORITHM_POLICY.display_digest(selected_digest)} is experimental "
+            f"and not enabled for PAdES signing. Use SHA-256/SHA-384/SHA-512 for PAdES."
+        )
+
+    cert, _cert_record = _request_certificate(record["certificate_serial"])
+    public_key_size = getattr(cert.public_key(), "key_size", None)
+    if not public_key_size:
+        raise ValueError("Client-side PAdES signing currently requires an RSA certificate")
+
+    document_path = Path(record["document_path"])
+    file_id = "pdf_" + secrets.token_hex(12)
+    presigned_path = settings.signed_documents_dir / f"client_presign_{file_id}.pdf"
+    signer_cert_path = settings.certificates_dir / f"client_side_signer_{record['certificate_serial']}.pem"
+    signer_cert_path.parent.mkdir(parents=True, exist_ok=True)
+    signer_cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=CLIENT_PDF_PRESIGN_TTL_SECONDS)
+
+    presign_state = prepare_external_pades_signature(
+        input_pdf_path=document_path,
+        presigned_pdf_path=presigned_path,
+        signer_cert_path=signer_cert_path,
+        reason=record["signing_purpose"],
+        field_name=f"SecureDocClientSignature_{request_id}",
+        public_key_size_bits=public_key_size,
+        digest_algorithm=selected_digest,
+    )
+    presign_state.update(
+        {
+            "request_id": request_id,
+            "file_id": file_id,
+            "certificate_serial": record["certificate_serial"],
+            "signer_cert_path": str(signer_cert_path),
+            "created_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+            "key_custody": {
+                "key_source": cert_status["key_source"],
+                "private_key_custody": cert_status["private_key_custody"],
+                "backend_has_private_key": cert_status["backend_has_private_key"],
+            },
+        }
+    )
+    _CLIENT_PDF_PRESIGNS[request_id] = presign_state
+
+    append_event(
+        actor="alice@example.com",
+        action="prepare_client_side_pades",
+        target=request_id,
+        status="ok",
+        metadata={
+            "fileId": file_id,
+            "keySource": cert_status["key_source"],
+            "digestAlgorithm": presign_state["digest_algorithm"],
+        },
+    )
+
+    return {
+        "request_id": request_id,
+        "file_id": file_id,
+        "certificate_serial": record["certificate_serial"],
+        "signed_attributes_base64": b64e(presign_state["signed_attrs_der"]),
+        "signed_attributes_sha256": sha256_bytes(presign_state["signed_attrs_der"]),
+        "document_digest_base64": b64e(presign_state["document_digest"]),
+        "digest_algorithm": presign_state["digest_algorithm"],
+        "digest_algorithm_normalized": presign_state["digest_algorithm_normalized"],
+        "signature_algorithm": "RSA-PSS",
+        "rsa_pss_salt_length": presign_state["rsa_pss_salt_length"],
+        "key_custody": presign_state["key_custody"],
+        "expires_at": presign_state["expires_at"],
+        "next_action": "sign_signed_attributes_with_client_private_key",
+        "warning": (
+            "Client must sign signed_attributes_base64 bytes exactly. "
+            "The backend verifies the raw signature with the certificate public key and finalizes CMS/PDF."
+        ),
+    }
+
+
+def finalize_client_pdf_signature(request_id: str, signature_base64: str) -> Dict:
+    record = _REQUESTS.get(request_id)
+    if not record:
+        raise ValueError("Unknown signing request")
+    if not record["confirmed"]:
+        raise ValueError("Signing intent has not been confirmed")
+    if record.get("signed"):
+        raise ValueError("Signing request has already been signed")
+    presign_state = _CLIENT_PDF_PRESIGNS.get(request_id)
+    if not presign_state:
+        raise ValueError("No pending client-side PAdES pre-sign state for request")
+    expires_at = _parse_utc_datetime(presign_state["expires_at"])
+    if datetime.now(timezone.utc) > expires_at:
+        _CLIENT_PDF_PRESIGNS.pop(request_id, None)
+        raise ValueError("Client-side PAdES pre-sign state has expired; prepare again")
+    if presign_state.get("certificate_serial") != record["certificate_serial"]:
+        _CLIENT_PDF_PRESIGNS.pop(request_id, None)
+        raise ValueError("Client-side PAdES pre-sign state is not bound to this certificate")
+
+    cert_status = _assert_certificate_usable(record["certificate_serial"])
+    if cert_status.get("key_source") != KEY_SOURCE_CLIENT_SIDE:
+        raise ValueError("Client-side PAdES finalization requires a CLIENT_SIDE_KEY certificate")
+    cert, _cert_record = _request_certificate(record["certificate_serial"])
+    selected_digest = presign_state["digest_algorithm_normalized"]
+    hash_algorithm = ALGORITHM_POLICY.cryptography_hash(selected_digest)
+    signature = b64d(signature_base64)
+
+    try:
+        cert.public_key().verify(
+            signature,
+            presign_state["signed_attrs_der"],
+            padding.PSS(
+                mgf=padding.MGF1(hash_algorithm),
+                salt_length=presign_state["rsa_pss_salt_length"],
+            ),
+            hash_algorithm,
+        )
+    except InvalidSignature as exc:
+        _CLIENT_PDF_PRESIGNS.pop(request_id, None)
+        raise ValueError("Client PDF signature does not verify against certificate public key") from exc
+
+    try:
+        sign_result = finalize_external_pades_signature(presign_state, signature)
+    except Exception:
+        _CLIENT_PDF_PRESIGNS.pop(request_id, None)
+        raise
+    signed_path = Path(sign_result["signed_pdf_path"])
+    signed_hash = sha256_bytes(signed_path.read_bytes())
+    verify_report = sign_result["verification_report"]
+    file_id = presign_state["file_id"]
+
+    metadata = {
+        "file_id": file_id,
+        "request_id": request_id,
+        "original_document_hash": record["document_hash"],
+        "signed_document_hash": signed_hash,
+        "original_filename": record["document_name"],
+        "signed_path": str(signed_path),
+        "signed_pdf_path": str(signed_path),
+        "signer_certificate_serial": record["certificate_serial"],
+        "target_profile": sign_result["target_profile"],
+        "achieved_profile": sign_result["achieved_profile"],
+        "pades_profile": sign_result["achieved_profile"],
+        "digest_algorithm": sign_result["digest_algorithm"],
+        "signature_algorithm": sign_result["signature_algorithm"],
+        "timestamp_status": sign_result["timestamp_status"],
+        "revocation_evidence_status": sign_result["revocation_evidence_status"],
+        "certificate_chain_status": sign_result["certificate_chain_status"],
+        "key_source": cert_status["key_source"],
+        "private_key_custody": cert_status["private_key_custody"],
+        "backend_has_private_key": cert_status["backend_has_private_key"],
+        "signature_origin": "browser_or_external_client",
+        "missing_requirements": sign_result["missing_requirements"],
+        "verification_report": verify_report,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _SIGNED_PDF_FILES[file_id] = metadata
+    record["signed"] = True
+    _CLIENT_PDF_PRESIGNS.pop(request_id, None)
+
+    append_event(
+        actor="alice@example.com",
+        action="finalize_client_side_pades",
+        target=request_id,
+        status="ok" if verify_report["accepted"] else "rejected",
+        metadata={
+            "fileId": file_id,
+            "keySource": cert_status["key_source"],
+            "digestAlgorithm": sign_result["digest_algorithm"],
+            "signatureOrigin": "browser_or_external_client",
+        },
+    )
+
+    return {
+        "request_id": request_id,
+        "file_id": file_id,
+        "download_url": f"/api/user-signing/signed-files/{file_id}",
+        "metadata": metadata,
+        "verification": verify_report,
+        "client_side_pades": {
+            "keyCustody": cert_status["key_source"],
+            "privateKeyCustody": cert_status["private_key_custody"],
+            "backendHasPrivateKey": cert_status["backend_has_private_key"],
+            "signatureOrigin": "browser_or_external_client",
+            "signedAttributeSource": "CMS signedAttrs DER",
+        },
+        "advanced": {
+            "pades_signing": sign_result,
+            "key_custody": {
+                "key_source": cert_status["key_source"],
+                "private_key_custody": cert_status["private_key_custody"],
+                "backend_has_private_key": cert_status["backend_has_private_key"],
+            },
+            "storage": {
+                "signed_file_id": file_id,
+                "signed_document_hash": signed_hash,
+            },
+        },
+    }
+
 
 def get_signed_pdf_record(file_id: str) -> Dict | None:
     return _SIGNED_PDF_FILES.get(file_id)

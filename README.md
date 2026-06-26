@@ -68,11 +68,11 @@ backend/
 
 SecureDoc now records key custody explicitly for each user certificate:
 
-| Mode | Private key location | Backend can sign PDF/PAdES |
-|------|----------------------|-----------------------------|
-| `DEMO_BACKEND_KEY` | Backend demo storage | Yes, demo only |
-| `CLIENT_SIDE_KEY` | Browser/user device/external client | No |
-| `REMOTE_HSM_KEY` | HSM/KMS/remote signing service | Not implemented for PDF yet |
+| Mode | Private key location | Backend signer can sign PDF/PAdES | Browser/external PAdES flow |
+|------|----------------------|-----------------------------------|-----------------------------|
+| `DEMO_BACKEND_KEY` | Backend demo storage | Yes, demo only | Not needed |
+| `CLIENT_SIDE_KEY` | Browser/user device/external client | No | Yes, demo pre-sign/finalize |
+| `REMOTE_HSM_KEY` | HSM/KMS/remote signing service | Not implemented for PDF yet | Future HSM/KMS integration |
 
 Certificates issued from a submitted public key are `CLIENT_SIDE_KEY` records:
 the backend stores the public key and proof-of-possession result, but not the
@@ -80,6 +80,42 @@ private key. Backend PDF/PAdES signing rejects these certificates instead of
 falling back to Alice's demo backend key.
 
 More detail: [`docs/KEY_CUSTODY_AND_CERTIFICATE_LIFECYCLE.md`](docs/KEY_CUSTODY_AND_CERTIFICATE_LIFECYCLE.md).
+
+### Client-side PDF/PAdES Demo
+
+For `CLIENT_SIDE_KEY` certificates, SecureDoc supports a browser/external
+pre-sign/finalize flow:
+
+1. Prepare and confirm a PDF signing request in User Signing.
+2. Backend prepares the PDF ByteRange and CMS signed attributes.
+3. Browser or external client signs `signed_attributes_base64` with the private
+   key; the private key is never sent to the backend.
+4. Backend verifies the raw signature against the certificate public key.
+5. Backend finalizes the CMS/PDF signature container and returns a signed PDF.
+
+This is still demo-grade: pending pre-sign state is in memory with a short TTL
+and single-use semantics. Production requires durable transaction state,
+authenticated sessions, rate limiting, hardened audit, real trusted CA/TSA and
+revocation operations, and HSM/token/qualified remote-signing controls where
+applicable.
+
+## Key Enrollment and Proof-of-Possession
+
+Browser/local-key enrollment follows this demo flow:
+
+1. Browser generates an RSA-PSS keypair.
+2. Backend creates a challenge bound to `challenge_id`, email, and public-key fingerprint.
+3. Browser signs the challenge with the private key.
+4. Backend verifies proof-of-possession, stores only the public key, and issues a `CLIENT_SIDE_KEY` certificate.
+
+The challenge store now enforces:
+
+- single-use challenge IDs;
+- 5-minute challenge expiry;
+- maximum 5 failed proof attempts before lockout;
+- idempotent certificate issuance per enrollment, so calling issue again returns the existing certificate instead of minting another certificate.
+
+This is still demo-grade because the challenge and certificate lifecycle stores are JSON files, not a transactional DB with real authentication, rate limiting, and tamper-resistant audit.
 
 ## How to Run
 
@@ -143,6 +179,10 @@ The OCSP endpoint now parses binary OCSP requests using `cryptography.x509.ocsp.
 7. Download signed PDF
 8. View verification report with target/achieved profile, timestamp source, and standard status fields
 9. Verify another signed PDF independently
+
+For a `CLIENT_SIDE_KEY` active certificate, the backend PDF signing button is
+disabled. Use Trust & Key Services / Browser PDF/PAdES Signing to run the
+pre-sign/finalize flow with the browser or external private key.
 
 ### Remote Signing Mode
 
@@ -209,5 +249,6 @@ This is an educational demo, **not production-ready**:
 - Blind signature does NOT sign PDFs — it is a separate privacy token pipeline. No Cashu compliance claim.
 - Signing history is in-memory; backend restart clears history.
 - Certificate lifecycle uses JSON in `data/certificates`.
+- Key enrollment challenge state uses JSON in `data/key_enrollment`; it has demo expiry/replay checks but not production-grade DB locking or rate limiting.
 - Remote signing uses a demo backend key; production requires HSM/KMS/qualified service.
 - SHA-3 digests are experimental and not enabled for PAdES signing.

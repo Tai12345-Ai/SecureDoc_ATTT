@@ -185,7 +185,7 @@ export function UserSigningPage() {
               <p><span>Target profile</span><strong>PAdES-B-LT</strong></p>
               {backendPadesBlocked && (
                 <p className="hint" style={{color: "#b45309"}}>
-                  Backend PAdES signing is disabled for this certificate. Use browser/external client signing for canonical payloads.
+                  Backend PAdES signing is disabled for this certificate. Use Trust & Key Services / Browser PDF/PAdES Signing for client-side PDF signing, or Browser Payload Signing for the canonical payload demo.
                 </p>
               )}
               <details className="advanced-demo">
@@ -247,13 +247,13 @@ export function UserSigningPage() {
             </div>
             {backendPadesBlocked && (
               <p className="hint" style={{color: "#b45309"}}>
-                Client-side key certificates cannot be used with backend PAdES signing yet. They can be used in the canonical payload client-side signing demo.
+                Client-side key certificates cannot be used by the backend PAdES signer. Use Trust & Key Services / Browser PDF/PAdES Signing to sign the PDF with the browser/external private key.
               </p>
             )}
             <details className="advanced-demo">
               <summary>Advanced demo: ký canonical payload</summary>
               <p className="hint">Flow chính của User Mode là ký PDF/PAdES. Nút này chỉ phục vụ thuyết trình cơ chế hash, nonce và canonical JSON.</p>
-              <p className="hint">Client-side key certificates cannot be used with backend PAdES signing yet. They can be used in the canonical payload client-side signing demo.</p>
+              <p className="hint">For CLIENT_SIDE_KEY certificates, use Browser Payload Signing here for canonical JSON, or Browser PDF/PAdES Signing for the PDF ByteRange/CMS flow.</p>
               <button type="button" onClick={doSign} disabled={!confirmed || !!busy || !!backendPadesBlocked}>{busy === "sign" ? "Đang ký..." : "Ký payload demo"}</button>
             </details>
             <details className="advanced-demo">

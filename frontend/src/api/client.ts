@@ -55,6 +55,18 @@ export function signPdf(requestId: string) {
   });
 }
 
+export function prepareClientPades(requestId: string) {
+  return jfetch(`${API_BASE}/user-signing/client-pades/prepare?request_id=${encodeURIComponent(requestId)}`, {
+    method: "POST"
+  });
+}
+
+export function finalizeClientPades(requestId: string, signatureBase64: string) {
+  return jfetch(`${API_BASE}/user-signing/client-pades/finalize?request_id=${encodeURIComponent(requestId)}&signature_base64=${encodeURIComponent(signatureBase64)}`, {
+    method: "POST"
+  });
+}
+
 export function submitClientSignature(requestId: string, signatureBase64: string) {
   return jfetch(`${API_BASE}/user-signing/submit-client-signature?request_id=${encodeURIComponent(requestId)}&signature_base64=${encodeURIComponent(signatureBase64)}`, {
     method: "POST"

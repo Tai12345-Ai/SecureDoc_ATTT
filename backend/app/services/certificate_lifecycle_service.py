@@ -222,7 +222,17 @@ def issue_enrollment(enrollment_id: str, activate: bool = False) -> Dict:
     enrollment = next((e for e in enrollments if e["enrollment_id"] == enrollment_id), None)
     if not enrollment:
         raise ValueError("Unknown enrollment")
-    if enrollment["status"] not in {"pending", "issued"}:
+
+    if enrollment["status"] == "issued":
+        existing_serial = enrollment.get("certificate_serial")
+        if not existing_serial:
+            raise ValueError("Issued enrollment is missing certificate_serial")
+        existing_record = next((c for c in _read_certificates() if c["serial"] == existing_serial), None)
+        if not existing_record:
+            raise ValueError("Issued enrollment certificate record is missing")
+        return activate_certificate(existing_serial) if activate else existing_record
+
+    if enrollment["status"] != "pending":
         raise ValueError(f"Enrollment cannot be issued from status {enrollment['status']}")
     if not enrollment.get("proof_verified"):
         raise ValueError("Enrollment proof-of-possession was not verified")
