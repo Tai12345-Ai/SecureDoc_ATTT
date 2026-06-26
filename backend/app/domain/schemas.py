@@ -14,8 +14,18 @@ class CertificateView(BaseModel):
     status: str
     valid_from: str
     valid_to: str
+    public_key_algorithm: str
+    public_key_size: int
+    certificate_signature_algorithm: str
+    document_signature_algorithm: str
+    digest_algorithm: str
     key_usage: List[str]
-    algorithm: str
+    certificate_profile: str
+    standards: List[str]
+    key_source: Optional[str] = None
+    private_key_custody: Optional[str] = None
+    backend_has_private_key: Optional[bool] = None
+    certificate_origin: Optional[str] = None
 
 class CertificateEnrollmentRequest(BaseModel):
     display_name: str
@@ -37,6 +47,8 @@ class CertificateStatusView(BaseModel):
     valid_from: str
     valid_to: str
     key_source: str
+    private_key_custody: str
+    backend_has_private_key: bool
     certificate_origin: str
     is_bootstrap_demo_certificate: bool
     source: str
@@ -61,6 +73,7 @@ class SigningResultView(BaseModel):
     checks: List[CheckItem]
     legal_ready: bool
     warnings: List[str]
+    verification_groups: Optional[Dict[str, Any]] = None
     advanced: Dict[str, Any]
 
 class PipelineStep(BaseModel):
@@ -74,6 +87,15 @@ class PipelineStep(BaseModel):
 class BlindSignatureResult(BaseModel):
     title: str
     message: str
+    target_scheme: str
+    achieved_scheme: str
+    scheme_complete: bool
+    production_ready: bool
+    blind_signature_valid: bool
+    key_id: str
+    token_hash: str
+    spent_status: str
+    warnings: List[str]
     steps: List[Dict[str, Any]]
     verified: bool
     unlinkability_note: str

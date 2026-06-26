@@ -77,9 +77,9 @@ const timeline = [
   },
   {
     phase: "PAdES signing",
-    title: "Sign PDF/PAdES-B-B",
+    title: "Sign PDF/PAdES-B-LT",
     actor: "Signer / PAdES Service",
-    what: "pyHanko tạo embedded PDF signature ở mức PAdES-B-B demo.",
+    what: "pyHanko tạo PDF signature với target PAdES-B-LT; B-B/B-T chỉ là bước nội bộ.",
     artifact: "signed.pdf",
     baseline: "pyHanko",
   },

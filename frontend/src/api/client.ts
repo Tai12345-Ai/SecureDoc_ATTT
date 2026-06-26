@@ -25,11 +25,12 @@ export function getUserWorkspace() {
   return jfetch(`${API_BASE}/user-signing/workspace`);
 }
 
-export function prepareSigningRequest(file: File, purpose: string, certSerial: string) {
+export function prepareSigningRequest(file: File, purpose: string, certSerial: string, digestAlgorithm: string = "sha256") {
   const body = new FormData();
   body.append("file", file);
   body.append("signing_purpose", purpose);
   body.append("certificate_serial", certSerial);
+  body.append("digest_algorithm", digestAlgorithm);
   return jfetch(`${API_BASE}/user-signing/prepare`, {
     method: "POST",
     body
@@ -50,6 +51,18 @@ export function signAndVerify(requestId: string) {
 
 export function signPdf(requestId: string) {
   return jfetch(`${API_BASE}/user-signing/sign-pdf?request_id=${encodeURIComponent(requestId)}`, {
+    method: "POST"
+  });
+}
+
+export function prepareClientPades(requestId: string) {
+  return jfetch(`${API_BASE}/user-signing/client-pades/prepare?request_id=${encodeURIComponent(requestId)}`, {
+    method: "POST"
+  });
+}
+
+export function finalizeClientPades(requestId: string, signatureBase64: string) {
+  return jfetch(`${API_BASE}/user-signing/client-pades/finalize?request_id=${encodeURIComponent(requestId)}&signature_base64=${encodeURIComponent(signatureBase64)}`, {
     method: "POST"
   });
 }
@@ -160,10 +173,38 @@ export function remoteSign(requestId: string, mfaCode: string) {
   });
 }
 
+export function remoteSignPdf(requestId: string, mfaCode: string) {
+  return jfetch(`${API_BASE}/remote-signing/sign-pdf`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ request_id: requestId, mfa_code: mfaCode })
+  });
+}
+
 export function runBlindSignature(message: string) {
   return jfetch(`${API_BASE}/blind-signature/run`, {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({ message })
+  });
+}
+
+export function getBlindSignerInfo() {
+  return jfetch(`${API_BASE}/blind-signature/signer-info`);
+}
+
+export function blindSign(blinded_msg: string, key_id: string) {
+  return jfetch(`${API_BASE}/blind-signature/blind-sign`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ blinded_msg, key_id })
+  });
+}
+
+export function redeemBlindToken(token_hash: string, signature: string, msg_prefix_hex: string, token: string) {
+  return jfetch(`${API_BASE}/blind-signature/redeem`, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ token_hash, signature, msg_prefix_hex, token })
   });
 }

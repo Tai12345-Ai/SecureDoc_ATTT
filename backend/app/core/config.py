@@ -14,8 +14,16 @@ class Settings(BaseModel):
     certificates_dir: Path = DATA_DIR / "certificates"
     demo_tsa_dir: Path = DATA_DIR / "demo_tsa"
     key_enrollment_dir: Path = DATA_DIR / "key_enrollment"
+    blind_signature_dir: Path = DATA_DIR / "blind_signature"
     revocation_file: Path = DATA_DIR / "revocations.json"
     audit_file: Path = DATA_DIR / "audit_events.jsonl"
+
+    # Timestamp configuration
+    # tsa_mode: "dummy" = pyHanko DummyTimeStamper (demo, not production)
+    #           "external" = connect to an external RFC3161 TSA service
+    tsa_mode: str = os.environ.get("SECUREDOC_TSA_MODE", "dummy")
+    tsa_url: str | None = os.environ.get("SECUREDOC_TSA_URL", None)
+    tsa_timeout: int = int(os.environ.get("SECUREDOC_TSA_TIMEOUT", "10"))
 
 settings = Settings()
 
@@ -28,5 +36,6 @@ for directory in [
     settings.certificates_dir,
     settings.demo_tsa_dir,
     settings.key_enrollment_dir,
+    settings.blind_signature_dir,
 ]:
     directory.mkdir(parents=True, exist_ok=True)

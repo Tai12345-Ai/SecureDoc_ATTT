@@ -1,9 +1,11 @@
 import React, { useState } from "react";
 import {
   createKeyEnrollmentChallenge,
+  finalizeClientPades,
   getDemoCrl,
   getRevocationStatus,
   issueTimestamp,
+  prepareClientPades,
   remoteSign,
   revokeSerial,
   submitClientSignature,
@@ -11,12 +13,21 @@ import {
   verifyTimestamp,
 } from "../api/client";
 import { AdvancedDetails } from "../components/AdvancedDetails";
+import { DownloadSignedPdfButton } from "../components/DownloadSignedPdfButton";
+import { VerificationSummary } from "../components/VerificationSummary";
 
 function arrayBufferToBase64(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes.buffer;
 }
 
 function pemFromSpki(spki: ArrayBuffer) {
@@ -55,6 +66,8 @@ export function SecurityServicesPage() {
   const [clientRequestId, setClientRequestId] = useState("");
   const [clientPayloadJson, setClientPayloadJson] = useState("");
   const [clientSignatureResult, setClientSignatureResult] = useState<any>(null);
+  const [clientPadesRequestId, setClientPadesRequestId] = useState("");
+  const [clientPadesResult, setClientPadesResult] = useState<any>(null);
   const [remoteRequestId, setRemoteRequestId] = useState("");
   const [remoteResult, setRemoteResult] = useState<any>(null);
   const [busy, setBusy] = useState("");
@@ -123,6 +136,24 @@ export function SecurityServicesPage() {
     });
   }
 
+  async function signBrowserPades() {
+    await run("client-pades", async () => {
+      if (!keyPair) throw new Error("Generate browser key first");
+      if (!clientPadesRequestId.trim()) throw new Error("requestId is required");
+      const presign = await prepareClientPades(clientPadesRequestId.trim());
+      if (presign.digest_algorithm_normalized !== "sha256") {
+        throw new Error("The browser demo key supports RSA-PSS/SHA-256 only. Prepare this PDF request with SHA-256, or use an external client that matches the selected digest.");
+      }
+      const signedAttrs = base64ToArrayBuffer(presign.signed_attributes_base64);
+      const signature = await crypto.subtle.sign(
+        { name: "RSA-PSS", saltLength: presign.rsa_pss_salt_length },
+        keyPair.privateKey,
+        signedAttrs,
+      );
+      setClientPadesResult(await finalizeClientPades(clientPadesRequestId.trim(), arrayBufferToBase64(signature)));
+    });
+  }
+
   return (
     <section className="card mode-page security-page" aria-busy={!!busy}>
       <div className="section-title mode-header">
@@ -160,7 +191,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card service-card">
         <h3>Revocation Service</h3>
-        <p className="hint">Demo CRL hiện chưa ký theo chuẩn X.509 CRL. Production cần signed CRL hoặc OCSP và policy kiểm tra revocation tại signing time nếu có trusted timestamp.</p>
+        <p className="hint">Backend tạo signed X.509 CRL và OCSP response cho demo. Production vẫn cần publication endpoint, policy kiểm tra revocation tại signing time và vận hành CA/TSA/OCSP tách biệt.</p>
         <label htmlFor="revocation-serial">Certificate serial</label>
         <input id="revocation-serial" value={serial} onChange={e => setSerial(e.target.value)} placeholder="Paste certificate serial" />
         <div className="actions">
@@ -174,6 +205,7 @@ export function SecurityServicesPage() {
       <div className="summary-card service-card">
         <h3>Browser Local Key Enrollment</h3>
         <p className="hint">The private key stays in this browser session. Backend receives only the public key and proof-of-possession signature.</p>
+        <p className="hint">The proof challenge is single-use, expires after 5 minutes, and locks after repeated failed attempts in the demo store.</p>
         <p className="hint">Submitting proof activates the browser-issued certificate for Alice. Return to User Signing and prepare a new request after this step.</p>
         <div className="actions">
           <button className="primary" type="button" onClick={generateBrowserKey} disabled={!!busy}>Generate browser key</button>
@@ -185,7 +217,7 @@ export function SecurityServicesPage() {
 
       <div className="summary-card service-card">
         <h3>Browser Payload Signing</h3>
-        <p className="hint">Prepare and confirm a request in User Signing, then paste its requestId and canonical payload JSON from Advanced details. This demonstrates browser-side signing; PDF/PAdES browser signing is a future integration.</p>
+        <p className="hint">Prepare and confirm a request in User Signing, then paste its requestId and canonical payload JSON from Advanced details. This demonstrates browser-side canonical payload signing; use Browser PDF/PAdES Signing below for the PDF ByteRange/CMS flow.</p>
         <label htmlFor="browser-request-id">Request ID</label>
         <input id="browser-request-id" value={clientRequestId} onChange={e => setClientRequestId(e.target.value)} placeholder="req_..." />
         <label htmlFor="browser-payload-json">Canonical payload JSON</label>
@@ -194,6 +226,24 @@ export function SecurityServicesPage() {
           <button type="button" onClick={submitBrowserPayloadSignature} disabled={!keyPair || !clientRequestId || !clientPayloadJson || !!busy}>Sign with browser key</button>
         </div>
         {clientSignatureResult && <AdvancedDetails data={clientSignatureResult} />}
+      </div>
+
+      <div className="summary-card service-card">
+        <h3>Browser PDF/PAdES Signing</h3>
+        <p className="hint">Prepare and confirm a PDF request in User Signing with a CLIENT_SIDE_KEY certificate. This flow asks the backend for CMS signed attributes, signs them with the browser private key, then finalizes the PDF ByteRange/CMS signature.</p>
+        <p className="hint">The browser demo key is RSA-PSS/SHA-256; use SHA-256 when preparing this request. External clients can use the API pre-sign/finalize flow with a matching digest-capable key.</p>
+        <label htmlFor="browser-pades-request-id">Request ID</label>
+        <input id="browser-pades-request-id" value={clientPadesRequestId} onChange={e => setClientPadesRequestId(e.target.value)} placeholder="req_..." />
+        <div className="actions">
+          <button type="button" onClick={signBrowserPades} disabled={!keyPair || !clientPadesRequestId || !!busy}>Pre-sign, sign, finalize PDF</button>
+        </div>
+        {clientPadesResult && (
+          <div>
+            {clientPadesResult.file_id && <DownloadSignedPdfButton fileId={clientPadesResult.file_id} />}
+            {clientPadesResult.verification && <VerificationSummary report={clientPadesResult.verification} title="Client-side PAdES verification" />}
+            <AdvancedDetails data={clientPadesResult} />
+          </div>
+        )}
       </div>
 
       <div className="summary-card service-card">

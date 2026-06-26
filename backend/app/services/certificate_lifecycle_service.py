@@ -25,8 +25,8 @@ from app.services.pki_service import (
     INT_CERT,
     USER_CERT,
     certificate_view_dict,
+    get_demo_backend_user_private_key,
     get_demo_user_public_key_pem,
-    get_user_private_key,
     get_intermediate_certificate,
     get_root_certificate,
     init_demo_pki,
@@ -35,6 +35,13 @@ from app.services.pki_service import (
     load_public_key_pem,
     validate_document_signing_certificate_profile,
     write_certificate_pem,
+)
+from app.services.key_custody import (
+    KEY_SOURCE_CLIENT_SIDE,
+    KEY_SOURCE_DEMO_BACKEND,
+    key_custody_metadata,
+    record_key_custody_metadata,
+    with_key_custody_metadata,
 )
 
 ENROLLMENTS_FILE = settings.certificates_dir / "enrollments.json"
@@ -61,8 +68,23 @@ def _write_json(path: Path, data):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _normalize_enrollment_record(enrollment: Dict) -> Dict:
+    key_source = enrollment.get("key_source")
+    if not key_source:
+        key_source = (
+            KEY_SOURCE_DEMO_BACKEND
+            if enrollment.get("enrollment_id") == "demo_alice_bootstrap"
+            else KEY_SOURCE_CLIENT_SIDE
+        )
+    return {**enrollment, **key_custody_metadata(key_source)}
+
+
+def _normalize_certificate_record(record: Dict) -> Dict:
+    return with_key_custody_metadata(record)
+
+
 def _read_enrollments() -> List[Dict]:
-    return _read_json(ENROLLMENTS_FILE, [])
+    return [_normalize_enrollment_record(item) for item in _read_json(ENROLLMENTS_FILE, [])]
 
 
 def _write_enrollments(enrollments: List[Dict]):
@@ -70,7 +92,7 @@ def _write_enrollments(enrollments: List[Dict]):
 
 
 def _read_certificates() -> List[Dict]:
-    return _read_json(CERTIFICATES_FILE, [])
+    return [_normalize_certificate_record(item) for item in _read_json(CERTIFICATES_FILE, [])]
 
 
 def _write_certificates(certificates: List[Dict]):
@@ -127,6 +149,7 @@ def create_enrollment(
     public_key_pem: str,
     proof_signature_base64: str,
     proof_challenge: str | None = None,
+    key_source: str = KEY_SOURCE_CLIENT_SIDE,
 ) -> Dict:
     _validate_identity(display_name, email)
     public_key = load_public_key_pem(public_key_pem)
@@ -142,6 +165,7 @@ def create_enrollment(
     public_key_path = settings.certificates_dir / f"public_key_{enrollment_id}.pem"
     public_key_path.write_text(public_key_pem, encoding="utf-8")
 
+    custody = key_custody_metadata(key_source)
     enrollment = {
         "enrollment_id": enrollment_id,
         "display_name": display_name,
@@ -154,6 +178,7 @@ def create_enrollment(
         "created_at": _now(),
         "decided_at": None,
         "certificate_serial": None,
+        **custody,
     }
 
     enrollments = _read_enrollments()
@@ -167,7 +192,7 @@ def create_demo_backend_enrollment(activate: bool = True) -> Dict:
     public_key = load_public_key_pem(public_key_pem)
     fingerprint = _public_key_fingerprint(public_key)
     challenge = default_pop_challenge("alice@example.com", fingerprint)
-    signature = get_user_private_key().sign(
+    signature = get_demo_backend_user_private_key().sign(
         challenge.encode("utf-8"),
         padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
         hashes.SHA256(),
@@ -178,6 +203,7 @@ def create_demo_backend_enrollment(activate: bool = True) -> Dict:
         public_key_pem=public_key_pem,
         proof_signature_base64=base64.b64encode(signature).decode("ascii"),
         proof_challenge=challenge,
+        key_source=KEY_SOURCE_DEMO_BACKEND,
     )
     cert_record = issue_enrollment(enrollment["enrollment_id"], activate=activate)
     cert_record["enrollment"] = enrollment
@@ -196,7 +222,17 @@ def issue_enrollment(enrollment_id: str, activate: bool = False) -> Dict:
     enrollment = next((e for e in enrollments if e["enrollment_id"] == enrollment_id), None)
     if not enrollment:
         raise ValueError("Unknown enrollment")
-    if enrollment["status"] not in {"pending", "issued"}:
+
+    if enrollment["status"] == "issued":
+        existing_serial = enrollment.get("certificate_serial")
+        if not existing_serial:
+            raise ValueError("Issued enrollment is missing certificate_serial")
+        existing_record = next((c for c in _read_certificates() if c["serial"] == existing_serial), None)
+        if not existing_record:
+            raise ValueError("Issued enrollment certificate record is missing")
+        return activate_certificate(existing_serial) if activate else existing_record
+
+    if enrollment["status"] != "pending":
         raise ValueError(f"Enrollment cannot be issued from status {enrollment['status']}")
     if not enrollment.get("proof_verified"):
         raise ValueError("Enrollment proof-of-possession was not verified")
@@ -213,6 +249,7 @@ def issue_enrollment(enrollment_id: str, activate: bool = False) -> Dict:
     pem_path = settings.certificates_dir / f"cert_{serial}.pem"
     write_certificate_pem(pem_path, cert)
 
+    custody = record_key_custody_metadata(enrollment)
     cert_record = {
         "serial": serial,
         "enrollment_id": enrollment_id,
@@ -225,7 +262,7 @@ def issue_enrollment(enrollment_id: str, activate: bool = False) -> Dict:
         "valid_to": cert.not_valid_after_utc.isoformat(),
         "revoked_at": None,
         "superseded_by": None,
-        "key_source": "external_public_key",
+        **custody,
         "origin": "lifecycle_issued",
         "created_at": _now(),
     }
@@ -279,6 +316,19 @@ def revoke_certificate(serial: str) -> Dict:
     return get_certificate_status(serial)
 
 
+def get_certificate_record(serial: str) -> Dict:
+    sync_demo_certificate_record()
+    record = next((c for c in _read_certificates() if c["serial"] == serial), None)
+    if not record:
+        raise ValueError("Unknown certificate")
+    return _normalize_certificate_record(record)
+
+
+def get_certificate_for_serial(serial: str):
+    record = get_certificate_record(serial)
+    return load_certificate_from_path(record["pem_path"])
+
+
 def _email_from_record(record: Dict) -> str:
     enrollment_id = record.get("enrollment_id")
     enrollment = next((e for e in _read_enrollments() if e["enrollment_id"] == enrollment_id), None)
@@ -310,6 +360,7 @@ def get_certificate_status(serial: str) -> Dict:
     record = next((c for c in _read_certificates() if c["serial"] == serial), None)
     if not record:
         raise ValueError("Unknown certificate")
+    record = _normalize_certificate_record(record)
 
     cert = load_certificate_from_path(record["pem_path"])
     lifecycle_status = _derive_status(record)
@@ -328,7 +379,9 @@ def get_certificate_status(serial: str) -> Dict:
         "issuer": cert.issuer.rfc4514_string(),
         "valid_from": cert.not_valid_before_utc.isoformat(),
         "valid_to": cert.not_valid_after_utc.isoformat(),
-        "key_source": record.get("key_source", "unknown"),
+        "key_source": record["key_source"],
+        "private_key_custody": record["private_key_custody"],
+        "backend_has_private_key": record["backend_has_private_key"],
         "certificate_origin": record.get("origin", "unknown"),
         "is_bootstrap_demo_certificate": record.get("origin") == "bootstrap_demo",
         "source": "DEMO_JSON_CERTIFICATE_LIFECYCLE",
@@ -353,20 +406,31 @@ def get_my_active_certificate(email: str = "alice@example.com") -> Dict:
     if not active:
         raise ValueError("No active certificate")
     cert = load_certificate_from_path(active["pem_path"])
-    return certificate_view_dict(cert, status_override=_derive_status(active))
+    return {
+        **certificate_view_dict(cert, status_override=_derive_status(active)),
+        **record_key_custody_metadata(active),
+        "certificate_origin": active.get("origin", "unknown"),
+        "is_bootstrap_demo_certificate": active.get("origin") == "bootstrap_demo",
+    }
 
 
 def get_certificate_chain(serial: str) -> Dict:
     record = next((c for c in _read_certificates() if c["serial"] == serial), None)
     if not record:
         raise ValueError("Unknown certificate")
+    record = _normalize_certificate_record(record)
     user_cert = load_certificate_from_path(record["pem_path"])
     inter = get_intermediate_certificate()
     root = get_root_certificate()
+    user_view = {
+        **certificate_view_dict(user_cert, status_override=_derive_status(record)),
+        **record_key_custody_metadata(record),
+        "certificate_origin": record.get("origin", "unknown"),
+    }
     return {
         "serial": serial,
         "chain": [
-            certificate_view_dict(user_cert, status_override=_derive_status(record)),
+            user_view,
             certificate_view_dict(inter, status_override="active"),
             certificate_view_dict(root, status_override="active"),
         ],
@@ -375,7 +439,7 @@ def get_certificate_chain(serial: str) -> Dict:
 
 def list_certificates() -> List[Dict]:
     sync_demo_certificate_record()
-    return _read_certificates()
+    return [_normalize_certificate_record(record) for record in _read_certificates()]
 
 
 def sync_demo_certificate_record(force_active: bool = False):
@@ -422,7 +486,7 @@ def sync_demo_certificate_record(force_active: bool = False):
         "valid_to": cert.not_valid_after_utc.isoformat(),
         "revoked_at": None,
         "superseded_by": None,
-        "key_source": "demo_backend_signing_key",
+        **key_custody_metadata(KEY_SOURCE_DEMO_BACKEND),
         "origin": "bootstrap_demo",
         "created_at": _now(),
     }
@@ -430,20 +494,21 @@ def sync_demo_certificate_record(force_active: bool = False):
     _write_certificates(certificates)
 
     enrollments = [e for e in _read_enrollments() if e["enrollment_id"] != "demo_alice_bootstrap"]
+    demo_public_key_pem = get_demo_user_public_key_pem()
+    demo_public_key = load_public_key_pem(demo_public_key_pem)
     enrollments.append({
         "enrollment_id": "demo_alice_bootstrap",
         "display_name": "Alice Demo Signer",
         "email": "alice@example.com",
         "public_key_path": str(settings.certificates_dir / "public_key_demo_alice_bootstrap.pem"),
-        "public_key_fingerprint_sha256": sha256_bytes(
-            get_demo_user_public_key_pem().encode("utf-8")
-        ),
+        "public_key_fingerprint_sha256": _public_key_fingerprint(demo_public_key),
         "proof_challenge": "DEMO_BOOTSTRAP",
         "proof_verified": True,
         "status": "issued",
         "created_at": _now(),
         "decided_at": _now(),
         "certificate_serial": serial,
+        **key_custody_metadata(KEY_SOURCE_DEMO_BACKEND),
     })
-    Path(enrollments[-1]["public_key_path"]).write_text(get_demo_user_public_key_pem(), encoding="utf-8")
+    Path(enrollments[-1]["public_key_path"]).write_text(demo_public_key_pem, encoding="utf-8")
     _write_enrollments(enrollments)
