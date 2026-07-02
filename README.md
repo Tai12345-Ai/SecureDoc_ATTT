@@ -134,7 +134,7 @@ pip install -r requirements.txt
 mkdir data
 cd backend
 $env:PYTHONPATH="."
-uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 API docs: http://127.0.0.1:8000/docs
